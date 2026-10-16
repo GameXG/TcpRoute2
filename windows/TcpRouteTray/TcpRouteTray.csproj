@@ -11,14 +11,15 @@
     <AssemblyName>TcpRoute2</AssemblyName>
     <Product>TcpRoute2</Product>
     <Title>TcpRoute2</Title>
-    <Version>1.0.0</Version>
-    <AssemblyVersion>1.0.0.0</AssemblyVersion>
-    <FileVersion>1.0.0.0</FileVersion>
+    <Version>1.1.0</Version>
+    <AssemblyVersion>1.1.0.0</AssemblyVersion>
+    <FileVersion>1.1.0.0</FileVersion>
     <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
     <StartupObject>TcpRouteTray.Program</StartupObject>
     <ApplicationIcon>..\..\assets\TcpRoute2-AppIcon.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="YamlDotNet" Version="16.3.0" />
     <Compile Remove="MainWindow.xaml.cs;MainWindowLocalization.cs;AdvancedTomlWindow.xaml.cs;ConfigEditorForm.cs;TextPromptWindow.cs;TrayApplicationContext.cs" />
     <Page Remove="MainWindow.xaml;AdvancedTomlWindow.xaml" />
     <Resource Include="..\..\assets\TcpRoute2-AppIcon.ico" Link="Assets\TcpRoute2.ico" />

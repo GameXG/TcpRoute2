@@ -3,6 +3,13 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+dependencies {
+    implementation("org.yaml:snakeyaml:2.3")
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
+}
+
 android {
     namespace = "io.tcproute.android"
     compileSdk = 35
@@ -12,8 +19,8 @@ android {
         applicationId = "io.tcproute.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 111
-        versionName = "1.0"
+        versionCode = 113
+        versionName = "1.1"
         testInstrumentationRunner = "io.tcproute.android.NativeBridgeInstrumentation"
         ndk {
             abiFilters += "arm64-v8a"

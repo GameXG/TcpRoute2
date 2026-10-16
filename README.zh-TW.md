@@ -11,8 +11,6 @@ TcpRoute2 是一個 TCP 層路由器，會為 TCP 連接從多條線路（允許
 
 支援線路級黑白名單、獨立於作業系統的 hosts 檔案、線路和 Host 候選位址的信譽度，以及透過 HTTP Host / TLS SNI 恢復目標域名。這些能力延續了原版 TcpRoute2 的路由原則，並增加了 DoH、Geosite/GeoIP，以及持續維護的 Windows 和 Android 客戶端。
 
-產品名為 **TcpRoute2**，倉庫位址為 [GameXG/TcpRoute2](https://github.com/GameXG/TcpRoute2)。原版 TcpRoute2 v0.5.14 的行為仍是配置相容基準；hosts 優先於 DNS 的新策略以本文說明為準。
-
 通過同一監聽端口提供 SOCKS5、HTTP 代理和 HTTPS CONNECT 服務。
 
 上游代理連接由 [ProxyClient](https://github.com/GameXG/ProxyClient) 提供，具體協議和連接參數見其文檔。TcpRoute2 負責線路選擇、規則匹配、DNS 調度及客戶端系統集成，並維護必需的內置直連線路。
@@ -176,7 +174,7 @@ Type = "base"
 - `PreHttpPorts` / `PreHttpsPorts`：當 SOCKS 客戶端已經把域名解析為 IP 時，TcpRoute2 在指定端口預讀 HTTP Host 或 TLS SNI 來恢復域名。兩項都省略時默認分別為 `[80]` 和 `[443]`；可使用 `[0]` 顯式關閉對應類型。
 - `UpStreams[].Name`：線路名稱，用於日誌和界面顯示；名稱不能重復。
 - `UpStreams[].ProxyUrl`：由 ProxyClient 解析的完整代理 URL。
-- `UpStreams[].DnsResolve`：是否由 TcpRoute2 解析目標域名。開啓後，命中 Hosts 就只使用其位址，未命中才查詢 DNS/DoH；舊配置中的 `socks4` 不支持遠端解析，通常應開啓。
+- `UpStreams[].DnsResolve`：是否由 TcpRoute2 解析目標域名。開啓後，命中 Hosts 就只使用其位址，未命中才查詢 DNS/DoH。
 - `UpStreams[].Credit`：線路信譽度。低信譽線路不會用於需要更高安全級別的明文端口。
 - `UpStreams[].Sleep`：沒有顯式規則命中時，開始嘗試該線路前等待的毫秒數；用於降低高延遲或高成本上游的搶跑概率。
 - `UpStreams[].CorrectDelay`：線路延遲修正值，單位毫秒。
@@ -245,9 +243,9 @@ Type = "geosite"
 Path = "geosite:apple,geosite:google"
 ```
 
-`Type="geosite"` 時，`Path` 是逗號分隔的集合選擇器，每項都帶 `geosite:` 前綴。核心只從 TcpRoute2 可執行文件所在目錄加載 `geosite.dat`，缺少文件時啓動報錯，不回退到配置目錄、工作目錄或其他資產目錄。Android 安裝目錄只讀，使用應用私有 Geo 目錄。Android 視覺化界面編輯 `apple,google`，保存時生成上面的格式。舊格式 `Type="geosite:..."` 的自定義本地或遠程數據路徑仍保持兼容。
+`Type="geosite"` 時，`Path` 是逗號分隔的集合選擇器，每項都帶 `geosite:` 前綴。核心只從 TcpRoute2 可執行文件所在目錄加載 `geosite.dat`，缺少文件時啓動報錯，不回退到配置目錄、工作目錄或其他資產目錄。Android 安裝目錄只讀，使用應用私有 Geo 目錄。Android 視覺化界面編輯 `apple,google`，保存時生成上面的格式。
 
-GeoIP 使用 `Type="geoip"`，選擇器例如 `Path="geoip:cn,geoip:private"`；在沒有域名時匹配目標 IP，並要求程式旁有 `geoip.dat`。舊格式 `Type="geoip:..."` 保留自訂資料路徑相容。兩種 Geo 來源的視覺化編輯均只開放集合名稱，保留隱藏的舊資料路徑和更新間隔；內建檔案由 Geo 資料管理器控制。
+GeoIP 使用 `Type="geoip"`，選擇器例如 `Path="geoip:cn,geoip:private"`；在沒有域名時匹配目標 IP，並要求程式旁有 `geoip.dat`。兩種 Geo 來源的視覺化編輯均只開放集合名稱，保留隱藏的舊資料路徑和更新間隔；內建檔案由 Geo 資料管理器控制。
 
 只要任一白名單命中，就只在所有命中白名單的上游之間競速；同一上游同時命中白名單和黑名單時，白名單優先。沒有白名單命中時，黑名單會排除對應上游，其餘上游繼續競速。顯式規則命中後不再應用 `Sleep` 延遲。
 
@@ -255,18 +253,39 @@ GeoIP 使用 `Type="geoip"`，選擇器例如 `Path="geoip:cn,geoip:private"`；
 
 `ProxyUrl` 填寫由 [ProxyClient](https://github.com/GameXG/ProxyClient) 支持的完整代理 URL。Android 視覺化客戶端先選擇代理類型，再校驗完整 URL 後保存。直連由客戶端自動維護；已有 v1.x TOML 的舊連接類型仍保留兼容能力。TcpRoute2 配置說明見 [`help.md`](help.md)，具體協議和 TLS 參數見 ProxyClient 文檔。
 
-傳統上游支援直連、HTTP、HTTPS、SOCKS5；匯入的 SOCKS4/SOCKS4a URL 在整個 v1.x 繼續支援，但視覺化介面不提供新增入口。ProxyClient 透過 xray-core 還支援 Shadowsocks（相容 `ss`）、VMess、VLESS、Trojan、WireGuard、Hysteria2。SOCKS5 支援使用者名稱密碼認證，HTTP/HTTPS 支援 Basic 認證。傳統代理 URL 可用 `upProxy` 指定上層代理；具體協議的巢狀能力和 URL 參數以 ProxyClient 為準。
+代理 URL 可用 `upProxy` 指定上層代理，值可以是完整代理 URL，也可以是另一條上游的 `Name`；支援前向和多級名稱引用，未知名稱、重複名稱和循環會在啟動前報錯。
 
-直連和舊版 SOCKS4 建議開啟 `DnsResolve`，執行本機解析，優先使用 hosts，未命中才查詢 DNS；支援遠端 DNS 的代理通常關閉它，將域名交給上游。`Sleep=80` 會在沒有明確規則命中時延遲 80 毫秒再嘗試該代理，為直連留出先行時間；黑白名單明確分流時不套用此延遲。`CorrectDelay` 用於修正快取中的連接耗時，適用於 Shadowsocks 等無法回報真實目標連接時間的上游。
+直連建議開啟 `DnsResolve`，執行本機解析，優先使用 hosts，未命中才查詢 DNS；支援遠端 DNS 的代理通常關閉它，將域名交給上游。`Sleep=80` 會在沒有明確規則命中時延遲 80 毫秒再嘗試該代理，為直連留出先行時間；黑白名單明確分流時不套用此延遲。`CorrectDelay` 用於修正快取中的連接耗時，適用於 Shadowsocks 等無法回報真實目標連接時間的上游。
+
+Android 從右上角「訂閱」選單新增訂閱、更新和選取節點，詳見 [Android 訂閱說明](android/README.md#subscriptions)。Windows 訂閱來源配置在 `TcpRoute2Client.json`，選取的節點會寫入目前的 TOML，成為一般的 `[[UpStreams]]` 條目。Windows 最小配置範例：
+
+```json
+{
+  "Subscriptions": [
+    {
+      "Id": "mysub",
+      "Name": "mysub",
+      "Url": "https://example.com/proxies.txt",
+      "UserAgent": "Mihomo/Clash Verge",
+      "SelectedNodesAll": false,
+      "UpdateIntervalMinutes": 0,
+      "Defaults": { "DnsResolve": false, "Credit": 0, "Sleep": 80, "CorrectDelay": 0 },
+      "LockedFields": [],
+      "Overrides": {}
+    }
+  ]
+}
+```
+
+訂閱回應可以是每行一個代理 URL 的清單、Base64 編碼清單、JSON 節點陣列、完整 Clash YAML 設定或完整 Surge 設定。程式會提取 Clash 的 `proxies:` 和 Surge 的 `[Proxy]` 條目。在系統匣選單中更新訂閱並選取節點；生成的 `Name` 使用 `sub_<訂閱名>_<節點ID>`，`Alias` 儲存節點真實名稱。客戶端選取項目和排除項目統一使用穩定 ID。支援的代理類型、JSON 節點欄位、預設值、鎖定欄位、`UserAgent`、排除項和更新行為見 [Windows 訂閱說明](windows/README.md#subscriptions)。
+
+`upProxy` 名稱區分大小寫，只複用被引用的 `ProxyUrl`，不繼承規則、DNS 解析、信譽度或延遲。請在 HTTP/HTTPS/SOCKS URL 上設定；目前 ProxyClient 不支援在直連或 Xray 擴充協定 URL 上設定名稱引用。範例見 [級聯代理說明](help.md#21-级联代理-upproxy)。
+
+上游可設定 `DialProxyFor="目標Name"`，載入時增加作為目標上游前置的用途，同時仍按自己的規則、信譽度和延遲參與一般請求選路。支援逗號分隔多個名稱或前綴，例如 `DialProxyFor="tw_0,hk_*"`；優先精確匹配，找不到同名節點時按前綴匹配，末尾 `*` 明確按前綴匹配。匹配使用 `Name`，不使用 `Alias`；禁止單獨的 `*` 和匹配自身。它與 URL 的 `upProxy` 互斥；目標也不能同時指定 `upProxy`。多個前置組成不同鏈路競速，刪除訂閱前置後不會在目標 TOML 中留下引用。詳見 [DialProxyFor](help.md#22-反向声明前置代理-dialproxyfor)。
 
 ## 信譽度功能
 
 `UpStreams[].Credit` 和 `Hosts[].Credit` 按目標連接埠的安全等級過濾連接，取線路與位址信譽度的較低值。明文及未知連接埠通常要求 `0`；HTTPS `443`、SMTP over TLS `465` 等連接埠允許低至 `-500`。例如 `Credit=-100` 會排除 HTTP `80`，仍允許 HTTPS `443`。具體見[連接埠表](netchan/dialchan_filter.go)。此策略按連接埠判斷，應用仍須驗證伺服器憑證。
-
-## 原版 HTTP 反劫持選項
-
-原版 README 介紹了 `SplitHttp` 拆包，以及配合直連 URL 的 `sleep` 參數使用外部 TTL 工具。這些屬於歷史功能：目前固定版本的 ProxyClient 沒有實作這些直連選項，也未附帶 TTL 工具。TcpRoute2 上游欄位 `Sleep` 控制的是嘗試線路前的等待時間，不是建立連接後延遲傳送資料。
-
 
 ## 具體細節
 

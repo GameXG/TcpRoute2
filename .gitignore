@@ -60,6 +60,8 @@ windows/TcpRouteTray/bin/
 windows/TcpRouteTray/obj/
 windows/TcpRouteConfigSelfTest/bin/
 windows/TcpRouteConfigSelfTest/obj/
+windows/TcpRouteMenuSelfTest/bin/
+windows/TcpRouteMenuSelfTest/obj/
 AGENTS.md
 CLAUDE.md
 .claude/

@@ -17,7 +17,55 @@ The Android entry point is a native Kotlin app with:
 - a `VpnService` that owns Android VPN permission and TUN lifecycle,
 - a foreground service for the local SOCKS mode,
 - config storage under the app files directory,
+- subscription management from the top-right menu, with persistent sources, cached nodes and TOML imports,
 - per-ABI TcpRoute2 core binaries plus the pinned `tun2proxy` Android library, isolated runner, and JNI bridge.
+
+## Subscriptions
+
+Open **Subscriptions** in the top-right menu. Add a named HTTP(S) source, set an
+optional User-Agent and save. **Refresh** reads URI lists, Base64 lists, JSON node
+arrays, complete Clash YAML profiles or Surge profiles. **Nodes** selects the
+imported routes; select/clear all is available, and long-pressing a node edits its
+override JSON. The source editor also accepts an override map keyed by node ID.
+
+Source defaults include `DnsResolve`, `Credit`, `Sleep` (milliseconds),
+`CorrectDelay`, `UpProxy` and `DialProxyFor`. Checked locks preserve existing TOML
+values during refresh without requiring a matching default; unlocked fields may be overwritten. New nodes use defaults,
+node options and overrides. `UpProxy` and `DialProxyFor` cannot be combined.
+
+`DialProxyFor="tw_0,hk_*"` makes the declaring node the front proxy for every
+matched target `Name`. Commas separate selectors; an exact name wins, otherwise
+the selector matches a prefix. A trailing `*` forces prefix matching. Matching
+is case-sensitive and does not use `Alias`; overlapping matches are deduplicated.
+The direction is `TcpRoute2 -> declaring node -> matched node -> destination`.
+Standalone `*` selectors and any selection of the declaring node itself are
+rejected; nonempty prefixes such as `tw_0*` remain valid.
+
+Imported nodes are real `[[UpStreams]]` entries named
+`sub_<subscription-name>_<stable-node-id>` in the saved TOML. `Alias` holds the
+real node name, including Chinese, and is retained through visual edits. The
+visual editor displays aliases while routing references keep using `Name`.
+Selections and exclusions both store stable IDs; old name-based exclusions
+migrate using cached nodes. Source-prefix history stays in client subscription
+storage. Refresh updates unlocked fields and connection details,
+adds new nodes and preserves locked values, routing rules and comments. Old
+readable upstream names and encoded header comments migrate on update, with chain references
+updated together. Deselection deletes the known node's TOML table and nested rules;
+reselecting imports current values and defaults. Refresh retains deselection by stable ID.
+Disappeared nodes and removed sources retain their tables with `Remove=true` for
+recovery. Startup protects nodes absent from a verified pool; an unavailable cache
+retains saved TOML. Explicit `upProxy` references must remain valid when deleting.
+A front node races independently with its own `Sleep`; when accelerating another
+route, only the receiving route's `Sleep` controls the attempt.
+
+Updates default to manual (`0`). An interval of at least 15 minutes opts into
+Android's periodic background updates; Android controls their exact execution
+time. Failed downloads, unsupported conversions and invalid edits retain the
+previous configuration and cache. Saved changes apply on the next session start;
+restart an existing VPN/SOCKS session to use the new routes.
+
+**Enable system proxy** advertises the local HTTP proxy on the VPN network on
+Android 10+. It does not grant privileged global proxy control.
 
 ## Layout
 

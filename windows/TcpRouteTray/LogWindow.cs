@@ -18,8 +18,8 @@ internal sealed class LogWindow : Window
     private readonly TcpRouteController _controller;
     private readonly TextBox _output = new()
     {
-        IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.NoWrap,
-        VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+        IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap,
+        VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
         FontFamily = new FontFamily("Consolas"), FontSize = 13, BorderThickness = new Thickness(0), Padding = new Thickness(12)
     };
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(500) };
@@ -35,7 +35,7 @@ internal sealed class LogWindow : Window
         Icon = System.Windows.Media.Imaging.BitmapFrame.Create(new Uri("pack://application:,,,/Assets/TcpRoute2.ico"));
         var layout = new DockPanel();
         var toolbar = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(12) };
-        _clear.Click += (_, _) => { _controller.ClearRecentOutput(); Refresh(); };
+        _clear.Click += (_, _) => ClearOutput();
         _export.Click += (_, _) => _controller.OpenLogs();
         toolbar.Children.Add(_clear); toolbar.Children.Add(_export);
         DockPanel.SetDock(toolbar, Dock.Top); layout.Children.Add(toolbar); layout.Children.Add(_output);
@@ -55,6 +55,14 @@ internal sealed class LogWindow : Window
     }
 
     public void AllowClose() => _allowClose = true;
+
+    private void ClearOutput()
+    {
+        _controller.ClearRecentOutput();
+        _output.Select(0, 0);
+        _output.Clear();
+        _output.ScrollToHome();
+    }
 
     private void Refresh()
     {

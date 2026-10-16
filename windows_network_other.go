@@ -16,5 +16,5 @@ func initializeWindowsNetwork() error {
 	return nil
 }
 
-func bindUpstream(pc proxyclient.ProxyClient) (proxyclient.ProxyClient, error) { return pc, nil }
-func startWindowsTun(upstream UpStreamDial) error                              { return nil }
+func bindUpstream(pc proxyclient.ProxyClient) (proxyclient.ProxyClient, error)    { return pc, nil }
+func startWindowsTun(upstream UpStreamDial, configs []ServerConfigUpStream) error { return nil }

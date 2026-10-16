@@ -13,7 +13,7 @@ import (
 
 var activeWindowsTun interface{}
 
-func startWindowsTun(upstream UpStreamDial) error {
+func startWindowsTun(upstream UpStreamDial, configs []ServerConfigUpStream) error {
 	name := os.Getenv("TCPROUTE_WINTUN_NAME")
 	if name == "" {
 		return nil
@@ -21,11 +21,15 @@ func startWindowsTun(upstream UpStreamDial) error {
 	if len(name) > 64 || strings.ContainsAny(name, "\r\n\\/") {
 		return fmt.Errorf("invalid Wintun adapter name")
 	}
+	bypass, err := newWindowsTunBypass(configs)
+	if err != nil {
+		return err
+	}
 	instance, err := core.New(&core.Config{})
 	if err != nil {
 		return err
 	}
-	if err := instance.AddFeature(&tunDispatcher{upstream: upstream}); err != nil {
+	if err := instance.AddFeature(&tunDispatcher{upstream: upstream, bypass: bypass.match}); err != nil {
 		return err
 	}
 	handler, err := core.CreateObject(instance, &tun.Config{Name: name, MTU: 1500})

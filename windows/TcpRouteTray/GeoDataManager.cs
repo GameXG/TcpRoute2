@@ -22,6 +22,19 @@ internal static class GeoDataManager
     private static readonly SemaphoreSlim UpdateLock = new(1, 1);
     private static readonly Regex ChecksumPattern = new("^[0-9a-f]{64}$", RegexOptions.CultureInvariant);
     private static readonly string[] FileNames = ["geosite.dat", "geoip.dat"];
+    private static IReadOnlyDictionary<string, GeoDataSource> _sources = new Dictionary<string, GeoDataSource>(StringComparer.Ordinal);
+
+    public static void Configure(IReadOnlyList<GeoDataSource> sources) =>
+        _sources = sources.Count == 0
+            ? new Dictionary<string, GeoDataSource>(StringComparer.Ordinal)
+            : sources.ToDictionary(source => source.Type, StringComparer.Ordinal);
+
+    public static string ConfiguredInterval()
+    {
+        if (_sources.Count == 0) return "0";
+        var intervals = _sources.Values.Select(source => source.UpdateInterval).Where(value => GeoDataSource.ParseInterval(value) > TimeSpan.Zero).ToArray();
+        return intervals.Length == 0 ? "0" : intervals.OrderBy(GeoDataSource.ParseInterval).First();
+    }
 
     public static void EnsureInstalled(string directory)
     {
@@ -50,7 +63,7 @@ internal static class GeoDataManager
             .Cast<DateTimeOffset?>()
             .FirstOrDefault();
         return new GeoDataSnapshot(
-            NormalizeInterval(interval),
+            interval,
             lastSuccess ?? fallback,
             lastError,
             FileSize(Path.Combine(directory, "geosite.dat")),
@@ -59,25 +72,20 @@ internal static class GeoDataManager
 
     public static bool IsDue(GeoDataSnapshot snapshot)
     {
-        var period = snapshot.Interval switch
-        {
-            "daily" => TimeSpan.FromDays(1),
-            "weekly" => TimeSpan.FromDays(7),
-            _ => (TimeSpan?)null
-        };
-        return period is not null &&
+        var period = GeoDataSource.ParseInterval(snapshot.Interval);
+        return period > TimeSpan.Zero &&
                (snapshot.LastSuccess is null || DateTimeOffset.UtcNow - snapshot.LastSuccess >= period);
     }
 
-    public static string NormalizeInterval(string? value) => value is "off" or "weekly" ? value : "daily";
-
-    public static async Task UpdateAsync(string directory, CancellationToken cancellationToken = default)
+    public static async Task UpdateAsync(string directory, CancellationToken cancellationToken = default, bool onlyIfDue = false, HttpClient? client = null)
     {
         if (!await UpdateLock.WaitAsync(0, cancellationToken))
             throw new InvalidOperationException("Geo data update is already running.");
         try
         {
             EnsureInstalled(directory);
+            var sources = _sources;
+            client ??= Client;
             var limits = new Dictionary<string, int>
             {
                 ["geosite.dat"] = 32 * 1024 * 1024,
@@ -87,15 +95,20 @@ internal static class GeoDataManager
             var checksums = new Dictionary<string, string>();
             foreach (var name in FileNames)
             {
-                var checksumBytes = await DownloadAsync($"{name}.sha256sum", 4 * 1024, cancellationToken);
-                var checksum = System.Text.Encoding.UTF8.GetString(checksumBytes)
-                    .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
-                    .FirstOrDefault()?.ToLowerInvariant() ?? "";
-                if (!ChecksumPattern.IsMatch(checksum)) throw new InvalidDataException($"Invalid checksum for {name}.");
-                var data = await DownloadAsync(name, limits[name], cancellationToken);
-                if (!CryptographicOperations.FixedTimeEquals(
-                        Convert.FromHexString(checksum), SHA256.HashData(data)))
-                    throw new InvalidDataException($"Checksum mismatch for {name}.");
+                var source = sources.GetValueOrDefault(Path.GetFileNameWithoutExtension(name));
+                if (onlyIfDue && (source is null || GeoDataSource.ParseInterval(source.UpdateInterval) == TimeSpan.Zero ||
+                    DateTimeOffset.UtcNow - new DateTimeOffset(File.GetLastWriteTimeUtc(Path.Combine(directory, name)), TimeSpan.Zero) < GeoDataSource.ParseInterval(source.UpdateInterval))) continue;
+                var dataUrl = source?.Url ?? new Uri(ReleaseBase, name).ToString();
+                var data = await DownloadAsync(client, dataUrl, limits[name], cancellationToken);
+                var checksum = Sha256(data);
+                if (source?.ChecksumUrl is not "")
+                {
+                    var checksumUrl = source?.ChecksumUrl ?? new Uri(ReleaseBase, $"{name}.sha256sum").ToString();
+                    var checksumBytes = await DownloadAsync(client, checksumUrl, 4 * 1024, cancellationToken);
+                    checksum = System.Text.Encoding.UTF8.GetString(checksumBytes).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.ToLowerInvariant() ?? "";
+                    if (!ChecksumPattern.IsMatch(checksum)) throw new InvalidDataException($"Invalid checksum for {name}.");
+                    if (!CryptographicOperations.FixedTimeEquals(Convert.FromHexString(checksum), SHA256.HashData(data))) throw new InvalidDataException($"Checksum mismatch for {name}.");
+                }
                 downloads[name] = data;
                 checksums[name] = checksum;
             }
@@ -107,16 +120,16 @@ internal static class GeoDataManager
         }
     }
 
-    private static async Task<byte[]> DownloadAsync(string name, int maximumBytes, CancellationToken cancellationToken)
+    private static async Task<byte[]> DownloadAsync(HttpClient client, string url, int maximumBytes, CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(ReleaseBase, name));
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.UserAgent.ParseAdd("TcpRoute2-Windows");
-        using var response = await Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
-        if (response.RequestMessage?.RequestUri?.Scheme != Uri.UriSchemeHttps)
+        if (new Uri(url).Scheme == Uri.UriSchemeHttps && response.RequestMessage?.RequestUri?.Scheme != Uri.UriSchemeHttps)
             throw new InvalidDataException("Geo data redirect must use HTTPS.");
         if (response.Content.Headers.ContentLength > maximumBytes)
-            throw new InvalidDataException($"Geo data response is too large: {name}.");
+            throw new InvalidDataException("Geo data response is too large.");
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var output = new MemoryStream();
         var buffer = new byte[81920];
@@ -125,7 +138,7 @@ internal static class GeoDataManager
             var count = await stream.ReadAsync(buffer, cancellationToken);
             if (count == 0) break;
             if (output.Length + count > maximumBytes)
-                throw new InvalidDataException($"Geo data response is too large: {name}.");
+                throw new InvalidDataException("Geo data response is too large.");
             output.Write(buffer, 0, count);
         }
         return output.ToArray();
@@ -140,7 +153,7 @@ internal static class GeoDataManager
         var installed = new List<string>();
         try
         {
-            foreach (var name in FileNames)
+            foreach (var name in downloads.Keys)
             {
                 foreach (var suffix in new[] { "", ".sha256" })
                 {
@@ -152,7 +165,7 @@ internal static class GeoDataManager
                     backups.Add((destination, backup));
                 }
             }
-            foreach (var name in FileNames)
+            foreach (var name in downloads.Keys)
             {
                 var destination = Path.Combine(directory, name);
                 File.WriteAllBytes(destination, downloads[name]);

@@ -49,10 +49,7 @@ func (sev *hSocksServer) New(conn net.Conn) (h Handler, rePre bool, err error) {
 	}
 
 	//TODO: 可以进行更详细的判断，例如长度，前几个值可能的范围。
-	if b[0] == 0x04 {
-		err = fmt.Errorf("暂时不支持 socks4 协议。")
-		return
-	} else if b[0] == 0x05 {
+	if b[0] == 0x05 {
 		return &hSocksHandle{sev, conn}, true, nil
 	} else {
 		err = NoHandleError("协议头不正确。")
@@ -76,8 +73,6 @@ func (h *hSocksHandle) Handle() error {
 
 	if b[0] == 0x05 {
 		return h.handleSocks5()
-	} else if b[0] == 0x04 {
-		return h.handleSocks4()
 	} else {
 		return NoHandleError("无法识别的协议。")
 	}
@@ -260,8 +255,4 @@ func (h *hSocksHandle) handleSocks5() error {
 	//fmt.Printf("接收：%v ,发送：%v\r\n", fCount.recv, fCount.send)
 
 	return err
-}
-
-func (h *hSocksHandle) handleSocks4() error {
-	return fmt.Errorf("未完成")
 }

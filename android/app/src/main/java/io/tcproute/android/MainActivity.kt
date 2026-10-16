@@ -156,6 +156,7 @@ class MainActivity : Activity() {
     @Deprecated("Deprecated in Android, retained for minSdk compatibility")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 4089) { if (resultCode == RESULT_OK) loadConfigEditor(); return }
         if (requestCode == RULE_FILE_REQUEST_CODE && resultCode == RESULT_OK) {
             val ruleRow = pendingRuleFileRow
             val hostRow = pendingHostFileRow
@@ -469,6 +470,7 @@ class MainActivity : Activity() {
                     R.id.menuImportOnline -> showOnlineConfigDialog()
                     R.id.menuExport -> exportConfig()
                     R.id.menuGeoData -> showGeoDataDialog()
+                    R.id.menuSubscriptions -> showSubscriptionDialog()
                     R.id.menuWifiProxy -> showWifiProxyDialog()
                     R.id.menuLanguage -> showLanguageDialog()
                     else -> return@setOnMenuItemClickListener false
@@ -477,6 +479,14 @@ class MainActivity : Activity() {
             }
             show()
         }
+    }
+
+    private fun showSubscriptionDialog() {
+        fun open() { startActivityForResult(Intent(this, SubscriptionActivity::class.java), 4089) }
+        if (runCatching { collectQuickConfig() != TcpRouteConfigStore.loadEditableConfig(this) }.getOrDefault(true)) {
+            AlertDialog.Builder(this).setMessage(R.string.subscription_unsaved)
+                .setNegativeButton(android.R.string.cancel, null).setPositiveButton(android.R.string.ok) { _, _ -> loadConfigEditor(); open() }.show()
+        } else open()
     }
 
     private fun showWifiProxyDialog() {
@@ -519,7 +529,7 @@ class MainActivity : Activity() {
             GeoDataManager.INTERVAL_DAILY,
             GeoDataManager.INTERVAL_WEEKLY
         )
-        val selected = intervals.indexOf(snapshot.interval).coerceAtLeast(1)
+        val selected = intervals.indexOf(snapshot.interval).coerceAtLeast(0)
         val choices = arrayOf(
             getString(R.string.geodata_auto_off),
             getString(R.string.geodata_auto_daily),
@@ -841,6 +851,7 @@ class MainActivity : Activity() {
             letterSpacing = 0.08f
         }
         val name = formInput(upstream.name, getString(R.string.route_name_hint))
+        val alias = formInput(upstream.alias, getString(R.string.field_alias))
         val proxyUrl = formInput(upstream.proxyUrl, getString(R.string.proxy_url_hint)).apply {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
         }
@@ -858,7 +869,7 @@ class MainActivity : Activity() {
         val credit = numericEditText(upstream.credit)
         val sleep = numericEditText(upstream.sleep)
         val correctDelay = numericEditText(upstream.correctDelay)
-        val row = UpstreamRow(container, title, name, proxyUrl, proxyValidation, dnsResolve, credit, sleep, correctDelay)
+        val row = UpstreamRow(container, title, name, proxyUrl, proxyValidation, dnsResolve, credit, sleep, correctDelay, upstream.dialProxyFor, upstream.remove, alias)
 
         if (isDirect) {
             upstreamRows.add(row)
@@ -868,6 +879,7 @@ class MainActivity : Activity() {
         }
 
         watchUpstreamNameChanges(name)
+        watchUpstreamNameChanges(alias)
         watchProxyUrlChanges(row)
 
         val header = LinearLayout(this).apply {
@@ -890,6 +902,8 @@ class MainActivity : Activity() {
         container.addView(header)
         container.addView(formLabel(getString(R.string.field_name), topMargin = 12))
         container.addView(name, matchWidth(topMargin = 6))
+        container.addView(formLabel(getString(R.string.field_alias), topMargin = 12))
+        container.addView(alias, matchWidth(topMargin = 6))
         container.addView(formLabel(getString(R.string.field_proxy_url), topMargin = 12))
         container.addView(proxyUrl, matchWidth(topMargin = 6))
         container.addView(proxyValidation)
@@ -1196,6 +1210,7 @@ class MainActivity : Activity() {
             override fun beforeTextChanged(text: CharSequence?, start: Int, count: Int, after: Int) = Unit
             override fun onTextChanged(text: CharSequence?, start: Int, before: Int, count: Int) {
                 refreshRuleUpstreamOptions()
+                refreshUpstreamTitles()
             }
             override fun afterTextChanged(text: Editable?) = Unit
         })
@@ -1246,7 +1261,7 @@ class MainActivity : Activity() {
     }
 
     private fun refreshRuleUpstreamOptions() {
-        val upstreamNames = upstreamRows.map { it.name.text.toString().trim() }
+        val upstreamNames = upstreamRows.map { it.alias.text.toString().ifBlank { it.name.text.toString().trim() } }
         val selected = selectedRoutingUpstream?.takeIf { it in upstreamRows } ?: upstreamRows.firstOrNull()
         selectedRoutingUpstream = selected
         refreshingRuleUpstreams = true
@@ -1284,7 +1299,7 @@ class MainActivity : Activity() {
                 getString(R.string.default_upstream)
             } else {
                 proxyIndex += 1
-                getString(R.string.upstream_number, proxyIndex)
+                row.alias.text.toString().ifBlank { getString(R.string.upstream_number, proxyIndex) }
             }
         }
     }
@@ -1348,11 +1363,14 @@ class MainActivity : Activity() {
                 val rules = ruleRowsByUpstream[row].orEmpty()
                 EditableUpstream(
                     name = row.name.text.toString(),
+                    alias = row.alias.text.toString(),
                     proxyUrl = row.proxyUrl.text.toString(),
                     dnsResolve = row.dnsResolve.isChecked,
                     credit = row.credit.text.toString().toIntOrNull() ?: 0,
                     sleep = row.sleep.text.toString().toIntOrNull() ?: 0,
                     correctDelay = row.correctDelay.text.toString().toIntOrNull() ?: 0,
+                    dialProxyFor = row.dialProxyFor,
+                    remove = row.remove,
                     whitelist = rules.filter { it.listKind == LIST_WHITELIST }.map(::editableDomainList),
                     blacklist = rules.filter { it.listKind == LIST_BLACKLIST }.map(::editableDomainList)
                 )
@@ -1657,7 +1675,10 @@ class MainActivity : Activity() {
         val dnsResolve: CheckBox,
         val credit: EditText,
         val sleep: EditText,
-        val correctDelay: EditText
+        val correctDelay: EditText,
+        val dialProxyFor: String,
+        val remove: Boolean,
+        val alias: EditText
     )
 
     private data class RuleSetRow(

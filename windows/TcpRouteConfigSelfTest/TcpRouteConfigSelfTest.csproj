@@ -7,6 +7,7 @@
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="YamlDotNet" Version="16.3.0" />
     <Compile Include="Program.cs" />
     <Compile Include="ArtifactSelfTest.cs" />
     <Compile Include="../TcpRouteTray/WintunNetworkSelfTest.cs" Link="WintunNetworkSelfTest.cs" />
@@ -16,6 +17,9 @@
     <Compile Include="../TcpRouteTray/PowerShellOutputSelfTest.cs" Link="PowerShellOutputSelfTest.cs" />
     <Compile Include="../TcpRouteTray/ConfigurationChangeTracker.cs" Link="ConfigurationChangeTracker.cs" />
     <Compile Include="../TcpRouteTray/TraySettings.cs" Link="TraySettings.cs" />
+    <Compile Include="../TcpRouteTray/SubscriptionManager.cs" Link="SubscriptionManager.cs" />
+    <Compile Include="../TcpRouteTray/SubscriptionTomlEditor.cs" Link="SubscriptionTomlEditor.cs" />
+    <Compile Include="../TcpRouteTray/SubscriptionSelfTest.cs" Link="SubscriptionSelfTest.cs" />
     <Compile Include="../TcpRouteTray/TrayConfigurationSelfTest.cs" Link="TrayConfigurationSelfTest.cs" />
     <Compile Include="../TcpRouteTray/WintunNetwork.cs" Link="WintunNetwork.cs" />
     <Compile Include="../TcpRouteTray/WindowsProxy.cs" Link="WindowsProxy.cs" />

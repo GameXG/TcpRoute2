@@ -3,6 +3,7 @@ module github.com/GameXG/TcpRoute2
 go 1.26
 
 require (
+	github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c
 	github.com/GameXG/ProxyClient v0.0.0-20261011182721-79be5c5c5fd0
 	github.com/gamexg/preRead v0.0.0-20160129024708-5103afdd7167
 	github.com/golang/glog v1.2.5
@@ -10,12 +11,12 @@ require (
 	github.com/inconshreveable/go-vhost v1.0.0
 	github.com/koding/multiconfig v0.0.0-20171124222453-69c27309b2d7
 	github.com/miekg/dns v1.1.72
+	github.com/pelletier/go-toml v1.9.5
 	github.com/xtls/xray-core v1.260327.0
 	google.golang.org/protobuf v1.36.11
 )
 
 require (
-	github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/apernet/quic-go v0.59.1-0.20260217092621-db4786c77a22 // indirect
 	github.com/cloudflare/circl v1.6.3 // indirect
@@ -28,7 +29,6 @@ require (
 	github.com/juju/ratelimit v1.0.2 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
-	github.com/pelletier/go-toml v1.9.5 // indirect
 	github.com/pires/go-proxyproto v0.11.0 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/refraction-networking/utls v1.8.3-0.20260301010127-aa6edf4b11af // indirect

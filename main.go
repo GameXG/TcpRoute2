@@ -21,6 +21,14 @@ type ServerConfig struct {
 	Hosts         []ServerConfigHostSource
 	UpStreams     []ServerConfigUpStream
 	Dns           []netchan.DNSConfig
+	GeoData       []ServerConfigGeoData
+}
+
+type ServerConfigGeoData struct {
+	Type           string
+	URL            string
+	ChecksumURL    string
+	UpdateInterval string `default:"0"`
 }
 
 type ServerConfigHostSource struct {
@@ -32,11 +40,14 @@ type ServerConfigHostSource struct {
 
 type ServerConfigUpStream struct {
 	Name         string `default:"direct"`
+	Alias        string
 	ProxyUrl     string `default:"direct://0.0.0.0:0000"`
-	DnsResolve   bool   `default:"false"`
-	Credit       int    `default:"0"`
-	Sleep        int    `default:"0"`
-	CorrectDelay int    `default:"0"`
+	DialProxyFor string
+	Remove       bool
+	DnsResolve   bool `default:"false"`
+	Credit       int  `default:"0"`
+	Sleep        int  `default:"0"`
+	CorrectDelay int  `default:"0"`
 	Whitelist    []ServerConfigDomainList
 	Blacklist    []ServerConfigDomainList
 }
@@ -48,6 +59,9 @@ type ServerConfigDomainList struct {
 }
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--subscription-toml" {
+		os.Exit(runSubscriptionTOMLEditor())
+	}
 	configPath, printVersion, configArgs, err := parseAppArguments(os.Args[1:])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -100,29 +114,39 @@ func main() {
 	// Direct is part of TcpRoute2's runtime contract. Keep it available even
 	// when an advanced configuration only declares proxy upstreams (or none).
 	// Clients may still serialize the explicit Direct entry for round-tripping.
+	configs := make([]ServerConfigUpStream, 0, len(serverConfig.UpStreams))
 	hasDirect := false
 	for _, up := range serverConfig.UpStreams {
+		configs = append(configs, up)
+		if up.Remove {
+			continue
+		}
 		proxyScheme := strings.SplitN(strings.TrimSpace(up.ProxyUrl), "://", 2)[0]
 		if strings.EqualFold(proxyScheme, "direct") {
 			hasDirect = true
-			break
 		}
 	}
 	if !hasDirect {
-		if err := upStream.AddConfiguredUpStream(ServerConfigUpStream{
+		configs = append([]ServerConfigUpStream{{
 			Name: "direct", ProxyUrl: "direct://0.0.0.0:0000", DnsResolve: true,
-		}, configBase); err != nil {
-			panic(err)
-		}
+		}}, configs...)
 	}
-	for _, up := range serverConfig.UpStreams {
+	configs, err = resolveUpstreamProxyReferences(configs)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	for _, up := range configs {
+		if up.Remove {
+			continue
+		}
 		if err := upStream.AddConfiguredUpStream(up, configBase); err != nil {
 			panic(err)
 		}
 	}
 
 	// 服务器监听
-	if err := startWindowsTun(upStream); err != nil {
+	if err := startWindowsTun(upStream, configs); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}

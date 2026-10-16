@@ -1,0 +1,31 @@
+name: Windows Tray Menu
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/windows-tray-menu.yml"
+      - "windows/TcpRouteTray/SubscriptionNodeMenu.cs"
+      - "windows/TcpRouteTray/TrayIconHost.cs"
+      - "windows/TcpRouteMenuSelfTest/**"
+  pull_request:
+    paths:
+      - ".github/workflows/windows-tray-menu.yml"
+      - "windows/TcpRouteTray/SubscriptionNodeMenu.cs"
+      - "windows/TcpRouteTray/TrayIconHost.cs"
+      - "windows/TcpRouteMenuSelfTest/**"
+
+permissions:
+  contents: read
+
+jobs:
+  menu:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Exercise native WinForms menu interaction
+        run: dotnet run --project windows/TcpRouteMenuSelfTest/TcpRouteMenuSelfTest.csproj --configuration Release

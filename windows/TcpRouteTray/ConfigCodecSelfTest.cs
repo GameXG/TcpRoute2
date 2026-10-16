@@ -10,11 +10,24 @@ internal static class ConfigCodecSelfTest
         Expect(dnsRendered.Contains(dnsDraft.DnsToml, StringComparison.Ordinal) &&
             dnsDraft.DnsToml.Contains("Priority=20", StringComparison.Ordinal), "Quick save dropped DNS configuration");
         var defaults = new NetworkFeaturePolicy();
+        var dialDraft = EditableTcpRouteConfigCodec.Parse("dial", "addr=\"127.0.0.1:7070\"\n[[UpStreams]]\nName=\"front\"\nProxyUrl=\"socks5://127.0.0.1:1080\"\nDialProxyFor=\"target\"\n[[UpStreams]]\nName=\"target\"\nProxyUrl=\"https://127.0.0.1:8443\"\n");
+        Expect(dialDraft.Upstreams.Single(node => node.Name == "front").DialProxyFor == "target" && EditableTcpRouteConfigCodec.Render(dialDraft).Contains("DialProxyFor=\"target\""), "Windows codec dropped DialProxyFor");
+        dialDraft.Upstreams.Single(node => node.Name == "front").Alias = "\u9999\u6E2F \u00B7 01";
+        var aliasRoundTrip = EditableTcpRouteConfigCodec.Parse("alias", EditableTcpRouteConfigCodec.Render(dialDraft));
+        Expect(aliasRoundTrip.Upstreams.Single(node => node.Name == "front").Alias == "\u9999\u6E2F \u00B7 01", "Windows codec dropped a readable alias");
+        dialDraft.Upstreams.Single(node => node.Name == "front").DialProxyFor = "tw_0,hk_*";
+        var selectorsRoundTrip = EditableTcpRouteConfigCodec.Parse("selectors", EditableTcpRouteConfigCodec.Render(dialDraft));
+        Expect(selectorsRoundTrip.Upstreams.Single(node => node.Name == "front").DialProxyFor == "tw_0,hk_*", "Windows codec changed multi-target prefix selectors");
         Expect(!defaults.AllowStun && !defaults.AllowQuic && !defaults.EnableIpv6,
             "Network features must default off");
         var enabledEnvironment = new NetworkFeaturePolicy(true, true, true).EnvironmentVariables;
         Expect(enabledEnvironment.Values.All(value => value == bool.TrueString),
             "Enabled network features were not mapped to the core environment");
+        var geoSources = TcpRouteConfigParser.GetGeoDataSources("[[GeoData]]\nType=\"geosite\"\nURL=\"https://example.test/geosite.dat\"\nUpdateInterval=\"0\"\n");
+        Expect(geoSources.Count == 1 && geoSources[0].ChecksumUrl == "" && geoSources[0].UpdateInterval == "0", "GeoData TOML did not preserve omitted-checksum settings");
+        var geoFollowedByRule = TcpRouteConfigParser.GetGeoDataSources("[[GeoData]]\nType=\"geoip\"\nUpdateInterval=\"24h\"\n[[UpStreams.Whitelist]]\nType=\"suffix\"\nPath=\"local.txt\"\n");
+        Expect(geoFollowedByRule.Count == 1 && geoFollowedByRule[0].Type == "geoip" && geoFollowedByRule[0].Url.EndsWith("geoip.dat") && geoFollowedByRule[0].ChecksumUrl == "", "GeoData parser crossed TOML table boundaries or invented a checksum URL");
+        Expect(GeoDataSource.ParseInterval("24h") == TimeSpan.FromDays(1) && GeoDataSource.ParseInterval("1h30m") == TimeSpan.FromMinutes(90), "TOML Geo data duration was not applied");
         var proxy = EditableUpstream.ProxyTemplate("socks5");
         proxy.Whitelist.Add(EditableDomainRule.Template(RuleSourceKind.Local));
         proxy.Whitelist[0].Path = "rules/local.txt";
@@ -88,16 +101,11 @@ Type="geosite:gfw"
 
         Expect(EditableTcpRouteConfigCodec.ProxyUrlError("socks5://missing-port") is not null, "Invalid proxy URL was accepted");
         Expect(EditableTcpRouteConfigCodec.ProxyUrlError("socks5://127.0.0.1:1080") is null, "Valid SOCKS5 URL was rejected");
-        Expect(!EditableTcpRouteConfigCodec.CreatableProxySchemes.Contains("socks4") &&
-               !EditableTcpRouteConfigCodec.CreatableProxySchemes.Contains("socks4a"),
-            "Legacy SOCKS4 types are still offered for new upstreams");
-        Expect(EditableTcpRouteConfigCodec.ProxyUrlError("socks4a://127.0.0.1:1080") is null,
-            "Imported SOCKS4a URL was rejected");
-        var legacy = new EditableTcpRouteConfig { ProfileName = "legacy" };
-        legacy.Upstreams.Add(EditableUpstream.ProxyTemplate("socks4a"));
-        var parsedLegacy = EditableTcpRouteConfigCodec.Parse("legacy", EditableTcpRouteConfigCodec.Render(legacy));
-        Expect(parsedLegacy.Upstreams[1].ProxyUrl == "socks4a://127.0.0.1:1080",
-            "Legacy SOCKS4a URL did not round-trip");
+        Expect(!EditableTcpRouteConfigCodec.ProxySchemes.Contains("socks4") &&
+               !EditableTcpRouteConfigCodec.ProxySchemes.Contains("socks4a"),
+            "Removed SOCKS4 types are still offered");
+        Expect(EditableTcpRouteConfigCodec.ProxyUrlError("socks4a://127.0.0.1:1080") is not null,
+            "Removed SOCKS4a URL was accepted");
         Expect(EditableTcpRouteConfigCodec.ProxyUrlError("ss://YWVzLTI1Ni1nY206cGFzc3dvcmRAMTI3LjAuMC4xOjgzODg=") is null,
             "Encoded Shadowsocks URL was rejected");
     }

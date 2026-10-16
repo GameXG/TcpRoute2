@@ -26,7 +26,7 @@ object GeoDataManager {
     fun snapshot(context: Context): Snapshot {
         val preferences = preferences(context)
         return Snapshot(
-            interval = preferences.getLong(KEY_INTERVAL, INTERVAL_DAILY),
+            interval = preferences.getLong(KEY_INTERVAL, INTERVAL_OFF),
             lastSuccess = preferences.getLong(KEY_LAST_SUCCESS, 0L).takeIf { it > 0 }
                 ?: listOf(File(context.filesDir, GEOSITE), File(context.filesDir, GEOIP))
                     .filter(File::isFile)

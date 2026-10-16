@@ -47,9 +47,13 @@ Name="https-proxy.com"
 # 目前支持以下格式
 # http 代理 http://123.123.123.123:8088
 # https 代理 https://123.123.123.123:8088
-# 旧版兼容（不再建议新建）：socks4://123.123.123.123:5050  socks4 协议不支持远端 dns 解析
-# 旧版兼容（不再建议新建）：socks4a://123.123.123.123:5050
-# socks5 代理 socks5://123.123.123.123:5050?upProxy=http://145.2.1.3:8080
+# socks5 代理，可用完整 URL 级联：socks5://123.123.123.123:5050?upProxy=http://145.2.1.3:8080
+# 也可引用另一个上游 Name：?upProxy=entry；支持前向和多级引用。
+# 可在前置线路单独设置 DialProxyFor="目标Name"，载入时绑定为目标的前置。
+# DialProxyFor 与本线路 URL 的 upProxy 互斥，目标也不能配置 upProxy。
+# 多个前置指向同一目标时组成多条链路竞速；各节点也保留普通请求选路资格及自身策略。
+# 名称区分大小写；仅复用 ProxyUrl，不继承规则、DnsResolve、Credit 或延迟。
+# 名称引用支持 http/https/socks5 URL；不支持在直连或 Xray 扩展协议 URL 上设置。
 # shadowsocks 代理 shadowsocks://method:password@123.123.123:5050
 # shadowsocks/vmess/vless/trojan/wireguard/hysteria2 由 ProxyClient 内置 xray-core 统一处理（兼容 ss/hysteria/hy2）
 # vmess 示例 vmess://base64(json)

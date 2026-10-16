@@ -68,7 +68,10 @@ data class EditableUpstream(
     val sleep: Int,
     val correctDelay: Int,
     val whitelist: List<EditableDomainList> = emptyList(),
-    val blacklist: List<EditableDomainList> = emptyList()
+    val blacklist: List<EditableDomainList> = emptyList(),
+    val dialProxyFor: String = "",
+    val remove: Boolean = false,
+    val alias: String = ""
 ) {
     companion object {
         fun direct(): EditableUpstream = EditableUpstream(
@@ -85,8 +88,6 @@ data class EditableUpstream(
             proxyUrl = when (scheme) {
                 "http" -> "http://127.0.0.1:8080"
                 "https" -> "https://127.0.0.1:8080"
-                "socks4" -> "socks4://127.0.0.1:1080"
-                "socks4a" -> "socks4a://127.0.0.1:1080"
                 "shadowsocks" -> "shadowsocks://aes-256-gcm:password@127.0.0.1:8388"
                 "vmess" -> "vmess://00000000-0000-0000-0000-000000000000@127.0.0.1:443?net=ws&tls=tls"
                 "vless" -> "vless://00000000-0000-0000-0000-000000000000@127.0.0.1:443?encryption=none&security=tls"
@@ -133,7 +134,11 @@ object TcpRouteConfigStore {
 
     fun saveEditableConfig(context: Context, config: EditableTcpRouteConfig): File {
         validate(config)
-        return ensureDefaultConfig(context).apply { writeText(renderEditableConfig(config)) }
+        val file = ensureDefaultConfig(context)
+        val original = file.readText()
+        val rendered = renderEditableConfig(config)
+        SubscriptionTomlEditor.write(file, original, rendered)
+        return file
     }
 
     fun loadRawConfig(context: Context): String =
@@ -161,6 +166,9 @@ object TcpRouteConfigStore {
     }
 
     fun writeRuntimeConfig(context: Context, config: File, allowLan: Boolean): File {
+        val original = config.readText()
+        val protectedContent = SubscriptionTomlEditor.protect(context, original)
+        if (protectedContent != original) SubscriptionTomlEditor.write(config, original, protectedContent)
         val host = if (allowLan) "0.0.0.0" else "127.0.0.1"
         val runtime = replaceListenAddress(config.readText(), host, readListenPort(config))
         return File(config.parentFile, ".tcproute-runtime.toml").apply { writeText(runtime) }
@@ -334,7 +342,7 @@ object TcpRouteConfigStore {
         if (port !in 1..65535 && scheme !in setOf("hysteria2", "hysteria", "hy2")) {
             return "Proxy URL needs a valid port."
         }
-        if (scheme in setOf("socks4", "socks4a", "socks5", "http", "https") && uri.rawPath !in setOf("", null)) {
+        if (scheme in setOf("socks5", "http", "https") && uri.rawPath !in setOf("", null)) {
             return "This proxy type does not support a URL path."
         }
         if (scheme in setOf("shadowsocks", "ss") &&
@@ -392,7 +400,10 @@ object TcpRouteConfigStore {
             config.upstreams.forEach { upstream ->
                 appendLine("[[UpStreams]]")
                 appendLine("Name=${tomlString(upstream.name.trim())}")
+                if (upstream.alias.isNotEmpty()) appendLine("Alias=${tomlString(upstream.alias)}")
                 appendLine("ProxyUrl=${tomlString(upstream.proxyUrl.trim())}")
+                if (upstream.dialProxyFor.isNotEmpty()) appendLine("DialProxyFor=${tomlString(upstream.dialProxyFor)}")
+                if (upstream.remove) appendLine("Remove=true")
                 appendLine("DnsResolve=${upstream.dnsResolve}")
                 appendLine("Credit=${upstream.credit}")
                 appendLine("Sleep=${upstream.sleep}")
@@ -456,7 +467,10 @@ object TcpRouteConfigStore {
             result.add(
                 EditableUpstream(
                     name = values["Name"] ?: "proxy",
+                    alias = values["Alias"] ?: "",
                     proxyUrl = values["ProxyUrl"] ?: "socks5://127.0.0.1:1080",
+                    dialProxyFor = values["DialProxyFor"] ?: "",
+                    remove = values["Remove"]?.toBooleanStrictOrNull() ?: false,
                     dnsResolve = values["DnsResolve"]?.toBooleanStrictOrNull() ?: false,
                     credit = values["Credit"]?.toIntOrNull() ?: 0,
                     sleep = values["Sleep"]?.toIntOrNull() ?: 0,
@@ -469,7 +483,7 @@ object TcpRouteConfigStore {
         }
 
         content.lineSequence().forEach { line ->
-            when (line.trim()) {
+            when (stripLineComment(line).trim()) {
                 "[[UpStreams]]" -> {
                     flushUpstream()
                     upstream = MutableUpstream()
@@ -699,9 +713,8 @@ object TcpRouteConfigStore {
 
     private val RULE_TYPES = setOf("base", "suffix", "pan", "regex")
     private val SOURCE_TYPES = setOf(SOURCE_LOCAL, SOURCE_REMOTE, SOURCE_GEOSITE, SOURCE_GEOIP)
-    // SOCKS4/4a remain accepted so imported legacy TOML can still round-trip and run.
     private val PROXY_SCHEMES = setOf(
-        "direct", "socks4", "socks4a", "socks5", "http", "https", "shadowsocks", "ss",
+        "direct", "socks5", "http", "https", "shadowsocks", "ss",
         "vmess", "vless", "trojan", "wireguard", "hysteria2", "hysteria", "hy2"
     )
 }

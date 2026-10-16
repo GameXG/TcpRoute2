@@ -20,20 +20,19 @@ class NativeBridgeInstrumentation : Instrumentation() {
             results.putString("native_bridge", "loaded")
 
             check("socks4" !in CREATABLE_PROXY_SCHEMES && "socks4a" !in CREATABLE_PROXY_SCHEMES) {
-                "Legacy SOCKS4 types must not be offered for new upstreams"
+                "Removed SOCKS4 types are still offered for new upstreams"
             }
-            val legacySocks = EditableTcpRouteConfig(
-                upstreams = listOf(
-                    EditableUpstream.direct(),
-                    EditableUpstream.proxyTemplate("socks4a").copy(name = "legacy-socks4a")
-                )
-            )
-            val renderedLegacySocks = TcpRouteConfigStore.renderEditableConfig(legacySocks)
-            val parsedLegacySocks = TcpRouteConfigStore.parseEditableConfig(renderedLegacySocks)
-            check(parsedLegacySocks.upstreams[1].proxyUrl == "socks4a://127.0.0.1:1080") {
-                "Imported legacy SOCKS4a upstream did not round-trip"
-            }
-            results.putString("legacy_socks", "hidden for creation, preserved for imported TOML")
+            val dialRaw = "addr=\"127.0.0.1:7070\"\n[[UpStreams]]\nName=\"front\"\nProxyUrl=\"socks5://127.0.0.1:1080\"\nDialProxyFor=\"target\"\n[[UpStreams]]\nName=\"target\"\nProxyUrl=\"https://127.0.0.1:8443\"\n"
+            val dialDraft = TcpRouteConfigStore.parseEditableConfig(dialRaw)
+            check(dialDraft.upstreams.first { it.name == "front" }.dialProxyFor == "target" &&
+                TcpRouteConfigStore.renderEditableConfig(dialDraft).contains("DialProxyFor=\"target\"")) { "Android codec dropped DialProxyFor" }
+            val removedDraft = TcpRouteConfigStore.parseEditableConfig(dialRaw.replace("DialProxyFor=\"target\"", "DialProxyFor=\"target\"\nRemove=true"))
+            check(removedDraft.upstreams.first { it.name == "front" }.remove &&
+                TcpRouteConfigStore.renderEditableConfig(removedDraft).contains("Remove=true")) { "Android codec dropped Remove" }
+            val clashNodes = SubscriptionStore.parse("proxies:\n  - name: clash\n    type: http\n    server: example.com\n    port: 8080\n")
+            check(clashNodes.single().proxyUrl == "http://example.com:8080") { "Android Clash subscription extraction failed" }
+            val surgeNodes = SubscriptionStore.parse("[Proxy]\nSurge = socks5, example.com, 1080\n")
+            check(surgeNodes.single().proxyUrl == "socks5://example.com:1080") { "Android Surge subscription extraction failed" }
 
             val longVmessJson = """{"v":"2","ps":"long-validation-link","add":"example.com","port":"443","id":"11111111-1111-1111-1111-111111111111","aid":"0","net":"ws","type":"none","host":"example.com","path":"/a/long/websocket/path","tls":"tls","sni":"example.com","alpn":"h2,http/1.1","fp":"chrome"}"""
             val longVmess = "vmess://" + Base64.getUrlEncoder().withoutPadding()

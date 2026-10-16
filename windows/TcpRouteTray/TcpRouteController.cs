@@ -27,6 +27,9 @@ internal sealed class TcpRouteController : IDisposable
     private TcpRouteRuntimeConfig? _runningRuntime;
     private TcpRouteConfig? _activeConfig;
     private bool _preserveUserSettings;
+    private readonly SubscriptionManager _subscriptions;
+    private string? _subscriptionSelectionContent;
+    private SubscriptionIdentity[] _subscriptionSelections = [];
 
     public TcpRouteController()
     {
@@ -35,6 +38,7 @@ internal sealed class TcpRouteController : IDisposable
 
         ConfigDirectory = portableRoot;
         RuntimeDirectory = Path.Combine(temp, WintunNetwork.AdapterName(portableRoot));
+        _subscriptions = new SubscriptionManager(Path.Combine(RuntimeDirectory, "subscriptions"));
         LogDirectory = Path.Combine(portableRoot, "logs");
         GeoDataDirectory = portableRoot;
         _settingsPath = Path.Combine(portableRoot, "TcpRoute2Client.json");
@@ -61,6 +65,106 @@ internal sealed class TcpRouteController : IDisposable
 
     public string? SelectedConfigId => _settings.SelectedConfigId;
     public string SettingsPath => _settingsPath;
+    public bool AutoReloadClientSettings => _settings.AutoReloadClientSettings;
+    public IReadOnlyList<SubscriptionSource> Subscriptions => _settings.Subscriptions;
+    public SubscriptionCache SubscriptionCache(SubscriptionSource source) => _subscriptions.Load(source);
+    public HashSet<string> SubscriptionSelectedNodes(string sourceId)
+    {
+        var config = GetSelectedConfig();
+        if (_subscriptionSelectionContent != config.Content)
+        {
+            _subscriptionSelections = SubscriptionTomlEditor.EditAsync(ResolveExecutable(), config.Content, [], [], SubscriptionOwnership()).GetAwaiter().GetResult().Selections;
+            _subscriptionSelectionContent = config.Content;
+        }
+        return _subscriptionSelections.Where(node => node.SourceId == sourceId).Select(node => node.NodeId).ToHashSet(StringComparer.Ordinal);
+    }
+    public bool SubscriptionsDue() => _settings.Subscriptions.Any(source => _subscriptions.IsDue(source));
+    private SubscriptionOwnership[] SubscriptionOwnership() => SubscriptionTomlEditor.Ownership(_settings.Subscriptions, _subscriptions);
+
+    public async Task RefreshDueSubscriptionsAsync()
+    {
+        foreach (var source in _settings.Subscriptions.Where(source => _subscriptions.IsDue(source)).ToArray())
+        {
+            try { await RefreshSubscriptionAsync(source.Id); }
+            catch (Exception error) { RecordEvent(error.Message); }
+        }
+    }
+
+    public async Task RefreshSubscriptionAsync(string id)
+    {
+        var source = _settings.Subscriptions.First(source => source.Id == id);
+        var config = GetSelectedConfig();
+        var selected = await SubscriptionTomlEditor.EditAsync(ResolveExecutable(), config.Content, [], [], SubscriptionOwnership());
+        source.SelectedNodes = selected.Selections.Where(node => node.SourceId == id).Select(node => node.NodeId).ToArray();
+        var previous = _subscriptions.Load(source);
+        var owned = selected.Selections.Where(node => node.SourceId == id).ToArray();
+        await _subscriptions.RefreshAsync(source, owned);
+        SubscriptionTomlChange[] changes = [];
+        var previousActive = _activeConfig;
+        var wasRunning = IsRunning;
+        var reloaded = false;
+        try
+        {
+            changes = await SubscriptionTomlEditor.PrepareSyncAsync(ResolveExecutable(), source, config.Id, LoadConfigs(), _subscriptions.Load(source).Nodes, previous.Nodes, SubscriptionOwnership());
+            SubscriptionTomlEditor.ApplyChanges(changes);
+            if (changes.Any(change => change.Path == config.Path)) { await ReloadConfigurationAsync(false); reloaded = true; }
+            var result = await SubscriptionTomlEditor.EditAsync(ResolveExecutable(), File.ReadAllText(config.Path), [], [], SubscriptionOwnership());
+            _settings.Subscriptions.First(item => item.Id == id).SelectedNodes = result.Selections.Where(node => node.SourceId == id).Select(node => node.NodeId).ToArray();
+            _subscriptionSelectionContent = result.Content;
+            _subscriptionSelections = result.Selections;
+            SaveSettings(userConfigurationChanged: true);
+            RecordEvent($"Subscription {source.Id} synchronized: {_subscriptions.Load(source).Nodes.Count} nodes, {changes.Length} profiles updated");
+        }
+        catch
+        {
+            try { SubscriptionTomlEditor.RollbackChanges(changes); }
+            finally { _subscriptions.Restore(source, previous); _subscriptionSelectionContent = null; }
+            if (reloaded) {
+                if (wasRunning && previousActive is not null) await StartAsync(previousActive);
+                else { _activeConfig = previousActive; if (previousActive is not null) GeoDataManager.Configure(TcpRouteConfigParser.GetGeoDataSources(previousActive.Content)); }
+            }
+            throw;
+        }
+    }
+
+
+    public async Task SelectSubscriptionNodeAsync(string sourceId, string nodeId, bool selected, bool reload = true)
+    {
+        var source = _settings.Subscriptions.First(source => source.Id == sourceId);
+        var node = _subscriptions.Load(source).Nodes.FirstOrDefault(node => node.Id == nodeId);
+        if (selected && (node is null || node.Removed)) throw new InvalidOperationException("This subscription node is unavailable; update the subscription or select another node.");
+        _settings.ValidatePreferences();
+        var config = GetSelectedConfig();
+        var nodeName = node?.Name ?? _subscriptionSelections.FirstOrDefault(identity => identity.SourceId == sourceId && identity.NodeId == nodeId)?.NodeName ?? nodeId;
+        object[] imports = selected ? [new { SourceId = sourceId, NodeId = nodeId, NodeName = node!.Name, Upstream = SubscriptionManager.GenerateUpstream(source, node!), source.LockedFields }] : [];
+        SubscriptionIdentity[] removals = selected ? [] : [new(sourceId, nodeId, nodeName, Delete: node is { Removed: false })];
+        var result = await ApplySubscriptionTomlAsync(config, imports, removals, reload);
+        var currentSource = _settings.Subscriptions.First(item => item.Id == sourceId);
+        currentSource.SelectedNodes = result.Selections.Where(identity => identity.SourceId == sourceId).Select(identity => identity.NodeId).ToArray();
+        SubscriptionManager.NormalizeExclusions(currentSource, _subscriptions.Load(currentSource).Nodes, config.Id);
+        var excluded = currentSource.ExcludedNodesByProfile.GetValueOrDefault(config.Id, []).ToHashSet(StringComparer.Ordinal);
+        if (selected) { excluded.Remove(nodeId); excluded.Remove(nodeName); } else { excluded.Remove(nodeName); excluded.Add(nodeId); }
+        currentSource.ExcludedNodesByProfile[config.Id] = excluded.Order(StringComparer.Ordinal).ToArray();
+        SaveSettings(userConfigurationChanged: true);
+    }
+
+    private async Task<SubscriptionTomlResult> ApplySubscriptionTomlAsync(TcpRouteConfig config, object[] imports, SubscriptionIdentity[] removals, bool reload = true)
+    {
+        var result = await SubscriptionTomlEditor.EditAsync(ResolveExecutable(), config.Content, imports, removals, SubscriptionOwnership());
+        if (result.Content != config.Content)
+        {
+            SubscriptionTomlEditor.WriteIfUnchanged(config.Path, config.Content, result.Content);
+            try { if (reload) await ReloadConfigurationAsync(false); }
+            catch
+            {
+                if (File.ReadAllText(config.Path) == result.Content) SubscriptionTomlEditor.WriteIfUnchanged(config.Path, result.Content, config.Content);
+                throw;
+            }
+        }
+        _subscriptionSelectionContent = result.Content;
+        _subscriptionSelections = result.Selections;
+        return result;
+    }
 
     public bool AllowLan => !_settings.UseWintun && _settings.AllowLan;
 
@@ -89,6 +193,20 @@ internal sealed class TcpRouteController : IDisposable
     public string Language => _settings.Language;
 
     public int? RunningPort => IsRunning ? _runningRuntime?.Port ?? _runtimeState.Port : null;
+
+    public int LocalProxyPort
+    {
+        get
+        {
+            if (RunningPort is { } port) return port;
+            if (_activeConfig is not null)
+            {
+                try { return TcpRouteConfigParser.GetListenAddress(_activeConfig.Content).Port; }
+                catch { }
+            }
+            return 7070;
+        }
+    }
 
     public bool IsRunning
     {
@@ -155,20 +273,14 @@ internal sealed class TcpRouteController : IDisposable
             SelectConfig(configs[0].Id);
         }
         if (!File.Exists(_settingsPath)) SaveSettings(userConfigurationChanged: true);
+        if (_activeConfig is not null) GeoDataManager.Configure(TcpRouteConfigParser.GetGeoDataSources(_activeConfig.Content));
     }
 
     public GeoDataSnapshot GetGeoDataSnapshot() => GeoDataManager.Snapshot(
         GeoDataDirectory,
-        _settings.GeoDataInterval,
+        GeoDataManager.ConfiguredInterval(),
         _settings.GeoDataLastSuccess,
         _settings.GeoDataLastError);
-
-    public void SetGeoDataInterval(string interval)
-    {
-        _settings.GeoDataInterval = GeoDataManager.NormalizeInterval(interval);
-        SaveSettings(userConfigurationChanged: true);
-        LastMessage = "Geo data schedule updated";
-    }
 
     public async Task<GeoDataSnapshot> UpdateGeoDataAsync(bool onlyIfDue = false)
     {
@@ -176,7 +288,7 @@ internal sealed class TcpRouteController : IDisposable
         if (onlyIfDue && !GeoDataManager.IsDue(state)) return state;
         try
         {
-            await GeoDataManager.UpdateAsync(GeoDataDirectory);
+            await GeoDataManager.UpdateAsync(GeoDataDirectory, onlyIfDue: onlyIfDue);
             _settings.GeoDataLastSuccess = DateTimeOffset.UtcNow;
             _settings.GeoDataLastError = null;
             LastMessage = "Geo data updated";
@@ -264,6 +376,13 @@ internal sealed class TcpRouteController : IDisposable
         LastMessage = $"Selected {Path.GetFileNameWithoutExtension(configId)}";
     }
 
+    public void SetAutoReloadClientSettings(bool enabled)
+    {
+        _settings.AutoReloadClientSettings = enabled;
+        SaveSettings(userConfigurationChanged: true);
+        LastMessage = enabled ? "Automatic client settings reload enabled" : "Automatic client settings reload disabled";
+    }
+
     public void SetAllowLan(bool allowLan)
     {
         _settings.AllowLan = allowLan;
@@ -273,6 +392,7 @@ internal sealed class TcpRouteController : IDisposable
 
     public void SetAllowStun(bool enabled)
     {
+        if (IsRunning || _starting) throw new InvalidOperationException("Stop TcpRoute2 before changing STUN.");
         _settings.AllowStun = enabled;
         SaveSettings(userConfigurationChanged: true);
         LastMessage = "STUN setting saved; restart to apply";
@@ -280,6 +400,7 @@ internal sealed class TcpRouteController : IDisposable
 
     public void SetAllowQuic(bool enabled)
     {
+        if (IsRunning || _starting) throw new InvalidOperationException("Stop TcpRoute2 before changing QUIC.");
         _settings.AllowQuic = enabled;
         SaveSettings(userConfigurationChanged: true);
         LastMessage = "QUIC setting saved; restart to apply";
@@ -287,6 +408,7 @@ internal sealed class TcpRouteController : IDisposable
 
     public void SetEnableIpv6(bool enabled)
     {
+        if (IsRunning || _starting) throw new InvalidOperationException("Stop TcpRoute2 before changing IPv6.");
         _settings.EnableIpv6 = enabled;
         SaveSettings(userConfigurationChanged: true);
         LastMessage = "IPv6 setting saved; restart to apply";
@@ -377,9 +499,20 @@ internal sealed class TcpRouteController : IDisposable
         _starting = true;
         try
         {
+        _settings.ValidatePreferences();
         StopProcess(clearProxy: true);
 
         var config = savedConfig ?? GetSelectedConfig();
+        if (savedConfig is null)
+        {
+            var protectedConfig = await SubscriptionTomlEditor.ProtectAsync(ResolveExecutable(), config, _settings.Subscriptions, _subscriptions);
+            if (protectedConfig.Content != config.Content)
+            {
+                SubscriptionTomlEditor.WriteIfUnchanged(config.Path, config.Content, protectedConfig.Content);
+                config = config with { Content = protectedConfig.Content };
+            }
+        }
+        GeoDataManager.Configure(TcpRouteConfigParser.GetGeoDataSources(config.Content));
         var runtime = config.ToRuntime(!_settings.UseWintun && _settings.AllowLan);
         var executablePath = ResolveExecutable();
         var runtimePath = Path.Combine(RuntimeDirectory, "tcproute-runtime.toml");
@@ -411,14 +544,21 @@ internal sealed class TcpRouteController : IDisposable
         startInfo.Environment["xray.location.asset"] = GeoDataDirectory;
         startInfo.Environment["TCPROUTE_CONFIG_BASE"] = Path.GetDirectoryName(config.Path)!;
         startInfo.Environment["TCPROUTE_CLIENT_SESSION"] = "true";
+        startInfo.Environment.Remove("TCPROUTE_TEMP_UPSTREAMS_FILE");
         startInfo.Environment.Remove("TCPROUTE_WINTUN_NAME");
         startInfo.Environment.Remove("TCPROUTE_OUTBOUND_INTERFACE");
         startInfo.Environment.Remove("TCPROUTE_BOOTSTRAP_DNS");
+        startInfo.Environment.Remove("TCPROUTE_TUN_AUTO_BYPASS");
+        startInfo.Environment.Remove("TCPROUTE_TUN_BYPASS_PROCESSES");
+        startInfo.Environment.Remove("TCPROUTE_TUN_BYPASS_RULES");
         if (network is not null)
         {
             startInfo.Environment["TCPROUTE_WINTUN_NAME"] = network.Name;
             startInfo.Environment["TCPROUTE_OUTBOUND_INTERFACE"] = network.InterfaceIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
             startInfo.Environment["TCPROUTE_BOOTSTRAP_DNS"] = string.Join(',', network.DnsServers);
+            startInfo.Environment["TCPROUTE_TUN_AUTO_BYPASS"] = _settings.TunAutoBypassLocalProxies.ToString();
+            startInfo.Environment["TCPROUTE_TUN_BYPASS_PROCESSES"] = JsonSerializer.Serialize(_settings.TunBypassProcesses);
+            startInfo.Environment["TCPROUTE_TUN_BYPASS_RULES"] = JsonSerializer.Serialize(_settings.TunBypassRules);
         }
         var networkPolicy = new NetworkFeaturePolicy(_settings.AllowStun, _settings.AllowQuic, _settings.EnableIpv6);
         foreach (var (key, value) in networkPolicy.EnvironmentVariables) startInfo.Environment[key] = value;
@@ -585,16 +725,16 @@ internal sealed class TcpRouteController : IDisposable
 
     public void RecordEvent(string message) { LastMessage = message; AppendLogLine(message); }
 
-    public (TraySettings Settings, TcpRouteConfig Config, string Signature) ReadConfigurationSnapshot()
+    public (TraySettings Settings, TcpRouteConfig Config, string Signature) ReadConfigurationSnapshot(bool reloadClientSettings = true)
     {
-        if (!File.Exists(_settingsPath)) throw new FileNotFoundException("Client configuration is missing; current settings retained.", _settingsPath);
-        var settings = TraySettings.Load(_settingsPath);
+        var settings = TraySettings.ReadForReload(_settingsPath, _settings, reloadClientSettings);
         settings.ValidatePreferences();
         var id = settings.SelectedConfigId ?? _settings.SelectedConfigId ?? "config.toml";
         if (Path.GetFileName(id) != id || !id.EndsWith(".toml", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("SelectedConfigId must be a TOML file name in the application directory.");
         var path = Path.Combine(ConfigDirectory, id);
         var config = new TcpRouteConfig(id, Path.GetFileNameWithoutExtension(id), path, File.ReadAllText(path));
+        _ = TcpRouteConfigParser.GetGeoDataSources(config.Content);
         var signature = ConfigurationSignature(settings, config);
         return (settings, config, signature);
     }
@@ -605,31 +745,43 @@ internal sealed class TcpRouteController : IDisposable
 
     public string AppliedConfigurationSignature() => _activeConfig is null ? "" : ConfigurationSignature(_settings, _activeConfig);
 
-    public async Task ReloadConfigurationAsync()
+    public async Task ReloadConfigurationAsync(bool reloadClientSettings = true)
     {
-        var next = ReadConfigurationSnapshot();
+        var next = ReadConfigurationSnapshot(reloadClientSettings);
         _ = TcpRouteConfigParser.GetListenAddress(next.Config.Content);
+        var removedSources = _settings.Subscriptions.Select(source => source.Id).Except(next.Settings.Subscriptions.Select(source => source.Id), StringComparer.Ordinal).ToHashSet(StringComparer.Ordinal);
+        SubscriptionTomlChange[] cleanup = removedSources.Count == 0 ? [] : await SubscriptionTomlEditor.PrepareSourceRemovalAsync(ResolveExecutable(), LoadConfigs(), removedSources, SubscriptionOwnership());
         var wasRunning = IsRunning;
         var previousSettings = _settings;
         var previousConfig = _activeConfig;
+        var stopped = false;
         _preserveUserSettings = true;
         try
         {
-            if (wasRunning) await StopAsync();
+            SubscriptionTomlEditor.ApplyChanges(cleanup);
+            next = ReadConfigurationSnapshot(reloadClientSettings);
+            if (wasRunning) { await StopAsync(); stopped = true; }
             next.Settings.CopyManagedStateFrom(previousSettings);
             _settings = next.Settings;
             if (wasRunning) await StartAsync(next.Config);
-            else _activeConfig = next.Config;
+            else { _activeConfig = next.Config; GeoDataManager.Configure(TcpRouteConfigParser.GetGeoDataSources(next.Config.Content)); }
+            foreach (var source in _settings.Subscriptions)
+                if (previousSettings.Subscriptions.FirstOrDefault(old => old.Id == source.Id) is { } previous &&
+                    (previous.ManagedPrefix != source.ManagedPrefix || previous.Url != source.Url))
+                    _subscriptions.RememberSource(previous, source);
             RecordEvent("Configuration reloaded");
         }
         catch (Exception error)
         {
+            Exception? cleanupError = null;
+            try { SubscriptionTomlEditor.RollbackChanges(cleanup); } catch (Exception failure) { cleanupError = failure; }
             _settings = previousSettings;
-            if (wasRunning && previousConfig is not null)
+            if (stopped && previousConfig is not null)
             {
                 try { await StartAsync(previousConfig); }
                 catch (Exception rollback) { throw new InvalidOperationException("Configuration reload and recovery failed: " + error.Message + "; " + rollback.Message, rollback); }
             }
+            if (cleanupError is not null) throw new InvalidOperationException("Configuration reload failed; TOML rollback also failed: " + cleanupError.Message, error);
             throw new InvalidOperationException("Configuration reload failed; previous settings retained: " + error.Message, error);
         }
         finally { _preserveUserSettings = false; }
@@ -861,8 +1013,9 @@ internal sealed class TcpRouteController : IDisposable
 
     private void SaveSettings(bool userConfigurationChanged = false)
     {
+        var saveUser = !_preserveUserSettings && (userConfigurationChanged || !File.Exists(_settingsPath));
         _settings.Save(_sessionSettingsPath);
-        if (!_preserveUserSettings && (userConfigurationChanged || !File.Exists(_settingsPath))) _settings.SaveUserConfiguration(_settingsPath);
+        if (saveUser) _settings.SaveUserConfiguration(_settingsPath);
     }
 
     private void EnsureDefaultConfig()

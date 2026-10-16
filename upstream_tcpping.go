@@ -142,16 +142,20 @@ func (su *tcppingUpStream) DialTimeout(network, address string, timeout time.Dur
 	if strings.HasPrefix(network, "udp") {
 		return su.dialUDP(network, address, timeout, dialClients)
 	}
-	eligibleNames := make(map[string]bool, len(dialClients))
-	for _, client := range dialClients {
-		eligibleNames[client.name] = true
-	}
-
 	// 尝试使用缓存中的连接
 	item, err := su.connCache.GetOptimal(address)
 	// Re-resolve local routes with hosts sources so edits/removals and Credit
 	// changes cannot be bypassed by a previously cached DNS or hosts address.
-	if err == nil && eligibleNames[item.dialName] && (len(su.hosts) == 0 || !item.dialClient.dnsResolve) {
+	cacheEligible := false
+	if err == nil {
+		for _, client := range dialClients {
+			if client.name == item.dialName {
+				cacheEligible = true
+				break
+			}
+		}
+	}
+	if err == nil && cacheEligible && (len(su.hosts) == 0 || !item.dialClient.dnsResolve) {
 
 		ctimeout := item.TcpPing
 		if ctimeout < 100*time.Millisecond {

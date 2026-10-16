@@ -16,6 +16,9 @@
         android:id="@+id/menuGeoData"
         android:title="@string/geodata_manager" />
     <item
+        android:id="@+id/menuSubscriptions"
+        android:title="@string/subscriptions" />
+    <item
         android:id="@+id/menuWifiProxy"
         android:title="@string/wifi_proxy" />
     <item

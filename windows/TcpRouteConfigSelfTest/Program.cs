@@ -5,6 +5,7 @@ internal static class Program
     private static void Main(string[] args)
     {
         ConfigCodecSelfTest.Run();
+        SubscriptionSelfTest.Run();
         GeoDataManagerSelfTest.Run();
         WintunDependenciesSelfTest.Run();
         TrayConfigurationSelfTest.Run();

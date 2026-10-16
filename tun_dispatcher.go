@@ -19,7 +19,11 @@ import (
 	"github.com/xtls/xray-core/transport"
 )
 
-type tunDispatcher struct{ upstream UpStreamDial }
+type tunDispatcher struct {
+	upstream   UpStreamDial
+	bypass     func(context.Context, xnet.Destination) (bool, error)
+	directDial func(context.Context, string, string) (net.Conn, error)
+}
 
 func (*tunDispatcher) Type() interface{} { return routing.DispatcherType() }
 func (*tunDispatcher) Start() error      { return nil }
@@ -32,21 +36,29 @@ func (d *tunDispatcher) DispatchLink(ctx context.Context, destination xnet.Desti
 	defer common.Interrupt(link.Reader)
 	defer common.Close(link.Writer)
 	address := destination.NetAddr()
-	if destination.Address.Family().IsIPv6() && !environmentEnabled("TCPROUTE_ENABLE_IPV6") {
+	bypass := false
+	if d.bypass != nil {
+		var err error
+		bypass, err = d.bypass(ctx, destination)
+		if err != nil {
+			return err
+		}
+	}
+	if !bypass && destination.Address.Family().IsIPv6() && !environmentEnabled("TCPROUTE_ENABLE_IPV6") {
 		return fmt.Errorf("IPv6 is disabled")
 	}
 	if destination.Network == xnet.Network_UDP {
-		return d.forwardUDP(ctx, address, link)
+		return d.forwardUDP(ctx, address, link, bypass)
 	}
 	if destination.Network != xnet.Network_TCP {
 		return fmt.Errorf("unsupported TUN network")
 	}
 	input := cnc.NewConnection(cnc.ConnectionOutputMulti(link.Reader), cnc.ConnectionInputMulti(link.Writer))
 	defer input.Close()
-	if destination.Port.Value() == 53 {
+	if destination.Port.Value() == 53 && (!bypass || isTunDNSGateway(address)) {
 		return forwardTunTCPDNS(ctx, input)
 	}
-	if protocol := CheckPre("tcp", address); protocol != 0 {
+	if protocol := CheckPre("tcp", address); protocol != 0 && !bypass {
 		original := input
 		timer := time.AfterFunc(10*time.Second, func() { _ = original.Close() })
 		input, address, _ = Pre(input, address, protocol)
@@ -55,7 +67,7 @@ func (d *tunDispatcher) DispatchLink(ctx context.Context, destination xnet.Desti
 			return fmt.Errorf("could not inspect TUN destination")
 		}
 	}
-	output, _, err := d.upstream.DialTimeout("tcp", address, 15*time.Second)
+	output, err := d.dial(ctx, "tcp", address, bypass)
 	if err != nil {
 		return err
 	}
@@ -71,13 +83,29 @@ func (d *tunDispatcher) DispatchLink(ctx context.Context, destination xnet.Desti
 	}
 }
 
-func (d *tunDispatcher) forwardUDP(ctx context.Context, address string, link *transport.Link) error {
+func (d *tunDispatcher) dial(ctx context.Context, network, address string, bypass bool) (net.Conn, error) {
+	if bypass {
+		if d.directDial != nil {
+			return d.directDial(ctx, network, address)
+		}
+		return netchan.OutboundDialer(15*time.Second).DialContext(ctx, network, address)
+	}
+	conn, _, err := d.upstream.DialTimeout(network, address, 15*time.Second)
+	return conn, err
+}
+
+func isTunDNSGateway(address string) bool {
+	host, port, _ := net.SplitHostPort(address)
+	return port == "53" && (host == "198.18.0.1" || host == "fd73:7463:7072::1")
+}
+
+func (d *tunDispatcher) forwardUDP(ctx context.Context, address string, link *transport.Link, bypass bool) error {
 	first, err := link.Reader.ReadMultiBuffer()
 	if err != nil {
 		return err
 	}
 	_, port, _ := net.SplitHostPort(address)
-	if port == "53" {
+	if port == "53" && (!bypass || isTunDNSGateway(address)) {
 		for {
 			for _, packet := range first {
 				answer := tunDNSResponse(ctx, packet.Bytes())
@@ -99,11 +127,11 @@ func (d *tunDispatcher) forwardUDP(ctx context.Context, address string, link *tr
 	if len(first) == 0 {
 		return io.EOF
 	}
-	if !udpDestinationAllowed(address, first[0].Bytes()) {
+	if !bypass && !udpDestinationAllowed(address, first[0].Bytes()) {
 		buf.ReleaseMulti(first)
 		return fmt.Errorf("UDP destination is disabled")
 	}
-	output, _, err := d.upstream.DialTimeout("udp", address, 15*time.Second)
+	output, err := d.dial(ctx, "udp", address, bypass)
 	if err != nil {
 		buf.ReleaseMulti(first)
 		return err
@@ -114,7 +142,7 @@ func (d *tunDispatcher) forwardUDP(ctx context.Context, address string, link *tr
 		packets := first
 		for {
 			for _, packet := range packets {
-				if !udpDestinationAllowed(address, packet.Bytes()) {
+				if !bypass && !udpDestinationAllowed(address, packet.Bytes()) {
 					continue
 				}
 				_ = output.SetWriteDeadline(time.Now().Add(30 * time.Second))

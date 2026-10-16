@@ -10,8 +10,6 @@ TcpRoute2 is a TCP router that selects the fastest successful connection across 
 
 It supports per-upstream whitelists and blacklists, independent hosts files, route and Host candidate trust levels, and recovery of destination domains from HTTP Host or TLS SNI. These preserve the original TcpRoute2 routing principles while adding DoH, Geosite/GeoIP, and maintained Windows and Android clients.
 
-The product is named **TcpRoute2**; its repository is [GameXG/TcpRoute2](https://github.com/GameXG/TcpRoute2). The original TcpRoute2 v0.5.14 behavior remains the configuration compatibility baseline, except for the documented hosts-first resolution policy.
-
 SOCKS5, HTTP proxy, and HTTPS CONNECT share one listener port.
 
 Upstream proxy connections are provided by [ProxyClient](https://github.com/GameXG/ProxyClient); see its documentation for supported protocols and connection parameters. TcpRoute2 owns route selection, rule matching, DNS scheduling, and client system integration, and maintains a required built-in Direct route.
@@ -173,7 +171,7 @@ Type = "base"
 - `PreHttpPorts` / `PreHttpsPorts`: ports where TcpRoute2 reads HTTP Host or TLS SNI to recover domains already resolved to IPs by SOCKS clients. If both fields are omitted, defaults are `[80]` and `[443]`. Use `[0]` to explicitly disable the corresponding type.
 - `UpStreams[].Name`: unique route name used in output and the UI.
 - `UpStreams[].ProxyUrl`: complete proxy URL parsed by ProxyClient.
-- `UpStreams[].DnsResolve`: whether TcpRoute2 resolves destination domains locally. When enabled, matching Hosts entries override DNS; only a miss queries DNS/DoH. Legacy `socks4` configurations usually need this enabled because SOCKS4 cannot resolve remotely.
+- `UpStreams[].DnsResolve`: whether TcpRoute2 resolves destination domains locally. When enabled, matching Hosts entries override DNS; only a miss queries DNS/DoH.
 - `UpStreams[].Credit`: route trust level. Low-trust routes are excluded from plaintext ports requiring a higher security level.
 - `UpStreams[].Sleep`: delay in milliseconds before attempting this route when no explicit rule matches. This can defer expensive or slow upstreams.
 - `UpStreams[].CorrectDelay`: route latency correction in milliseconds.
@@ -242,27 +240,57 @@ Type = "geosite"
 Path = "geosite:apple,geosite:google"
 ```
 
-With `Type="geosite"`, each comma-separated selector has a `geosite:` prefix. The core loads `geosite.dat` only from its executable directory and fails at startup if missing, without falling back to the configuration, working, or other asset directories. Android's installation directory is read-only, so the app uses its private Geo directory. Android's visual editor accepts `apple,google` and saves the format above. Legacy `Type="geosite:..."` entries retain their custom local/remote data-path compatibility.
+With `Type="geosite"`, each comma-separated selector has a `geosite:` prefix. The core loads `geosite.dat` only from its executable directory and fails at startup if missing, without falling back to the configuration, working, or other asset directories. Android's installation directory is read-only, so the app uses its private Geo directory. Android's visual editor accepts `apple,google` and saves the format above.
 
-GeoIP uses `Type="geoip"` and selectors such as `Path="geoip:cn,geoip:private"`. It matches literal destination IPs when no domain is available and requires `geoip.dat` beside the executable. Legacy `Type="geoip:..."` entries retain custom data paths. Visual editors expose list names for both Geo kinds and preserve hidden legacy data paths and refresh intervals; the Geo data manager controls the built-in files.
+GeoIP uses `Type="geoip"` and selectors such as `Path="geoip:cn,geoip:private"`. It matches literal destination IPs when no domain is available and requires `geoip.dat` beside the executable. Visual editors expose list names for both Geo kinds and preserve hidden legacy data paths and refresh intervals; the Geo data manager controls the built-in files.
 
 If any whitelist matches, only upstreams with matching whitelists participate in the race. When both a whitelist and blacklist match the same upstream, the whitelist wins. If no whitelist matches, blacklists exclude their respective upstreams and the remaining routes race. Explicit rule matches bypass `Sleep`.
 
 ### Upstream Connections
 
+Named `upProxy` references are case-sensitive and reuse only the referenced `ProxyUrl`, without inheriting routing rules, DNS resolution, credit, or delays. Set this parameter on HTTP/HTTPS/SOCKS URLs; Direct and Xray extension URLs cannot use named `upProxy` with the current ProxyClient. See [the chain example](help.md#21-级联代理-upproxy).
+
 `ProxyUrl` accepts a complete proxy URL supported by [ProxyClient](https://github.com/GameXG/ProxyClient). Android's visual editor selects the proxy type first and validate the complete URL before saving. Direct is maintained automatically; legacy connection types in existing v1.x TOML remain compatible. See [help.md](help.md) for TcpRoute2 configuration and ProxyClient documentation for protocol and TLS parameters.
 
-Traditional upstreams include Direct, HTTP, HTTPS, and SOCKS5; imported SOCKS4/SOCKS4a URLs remain supported throughout v1.x, but the visual editor does not offer them for new connections. ProxyClient's xray-core integration also provides Shadowsocks (`ss` alias), VMess, VLESS, Trojan, WireGuard, and Hysteria2. SOCKS5 supports username/password authentication, and HTTP/HTTPS supports Basic authentication. Traditional proxy URLs can specify an upper proxy with `upProxy`; protocol-specific nesting and URL options follow ProxyClient's contract.
+Proxy URLs can specify an upper proxy with `upProxy`, either as a complete proxy URL or another upstream `Name`; forward and multi-level name references are supported, while unknown names, duplicate names, and cycles fail validation.
 
-For Direct and legacy SOCKS4, enable `DnsResolve` to resolve locally, with hosts taking precedence over DNS. With remote-DNS-capable proxies, leave it off to send the domain upstream. `Sleep=80` delays an unruled proxy attempt by 80 milliseconds, giving Direct a head start; explicit whitelist/blacklist routing bypasses this delay. `CorrectDelay` adjusts cached connection timing and is useful when an upstream cannot report the actual destination connection time, as with Shadowsocks.
+For Direct, enable `DnsResolve` to resolve locally, with hosts taking precedence over DNS. With remote-DNS-capable proxies, leave it off to send the domain upstream. `Sleep=80` delays an unruled proxy attempt by 80 milliseconds, giving Direct a head start; explicit whitelist/blacklist routing bypasses this delay. `CorrectDelay` adjusts cached connection timing and is useful when an upstream cannot report the actual destination connection time, as with Shadowsocks.
+
+Android subscription management is available from the top-right **Subscriptions** menu: add a source, refresh and select nodes. See the [Android subscription guide](android/README.md#subscriptions). Windows subscription sources are configured in `TcpRoute2Client.json`, while selected nodes are written into the active TOML as ordinary `[[UpStreams]]` entries. A minimal Windows source is:
+
+```json
+{
+  "Subscriptions": [
+    {
+      "Id": "mysub",
+      "Name": "mysub",
+      "Url": "https://example.com/proxies.txt",
+      "UserAgent": "Mihomo/Clash Verge",
+      "SelectedNodesAll": false,
+      "UpdateIntervalMinutes": 0,
+      "Defaults": { "DnsResolve": false, "Credit": 0, "Sleep": 80, "CorrectDelay": 0 },
+      "LockedFields": [],
+      "Overrides": {}
+    }
+  ]
+}
+```
+
+The response may be a newline-delimited proxy URL list, Base64-encoded list, JSON node array, complete Clash YAML profile, or complete Surge configuration. Open the tray menu, refresh the subscription, and select nodes; generated `Name` values use `sub_<subscription>_<node-id>`, while `Alias` holds the real node name. Client selections and exclusions use stable IDs. See the [Windows subscription reference](windows/README.md#subscriptions) for extracted proxy types, JSON node fields, defaults, locked fields, `UserAgent`, exclusions, and refresh behavior.
+
+An upstream may set `DialProxyFor="target-name"` to also act as that upstream's
+front proxy, bound at load time, while retaining its own ordinary routing rules,
+credit, and delay. Comma-separated selectors such as `DialProxyFor="tw_0,hk_*"` apply that front
+to multiple target names or prefixes. Exact names have priority; a trailing `*`
+forces prefix matching. Matching uses `Name`, not `Alias`; standalone `*`
+selectors and self-selection are rejected. It is mutually exclusive with URL `upProxy`;
+the receiver also cannot specify `upProxy`. Several fronts produce competing
+chain candidates. Removing a subscribed front leaves no reference in the
+receiver's TOML. See [DialProxyFor](help.md#22-反向声明前置代理-dialproxyfor).
 
 ## Trust Levels
 
 `UpStreams[].Credit` and `Hosts[].Credit` filter connections by destination-port security requirements. The lower of route and address credit applies. Plaintext and unknown ports normally require `0`; ports such as HTTPS `443` and SMTP over TLS `465` accept values down to `-500`. For example, `Credit=-100` excludes HTTP port `80` while permitting HTTPS port `443`. See the [port table](netchan/dialchan_filter.go). This is a port-based policy; applications must still verify server certificates.
-
-## Historical HTTP Anti-Hijacking Options
-
-The original README described `SplitHttp` request splitting and an external TTL tool coordinated with the Direct URL's `sleep` parameter. These are historical features: the current pinned ProxyClient implementation does not implement those Direct options or bundle the TTL tool. TcpRoute2's upstream `Sleep` field delays a route attempt; it does not delay payload transmission after connecting.
 
 ## Routing Details
 

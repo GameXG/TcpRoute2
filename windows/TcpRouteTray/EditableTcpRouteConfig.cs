@@ -60,7 +60,10 @@ internal sealed class EditableDomainRule
 internal sealed class EditableUpstream
 {
     public string Name { get; set; } = "";
+    public string Alias { get; set; } = "";
     public string ProxyUrl { get; set; } = "";
+    public string DialProxyFor { get; set; } = "";
+    public bool Remove { get; set; }
     public bool DnsResolve { get; set; }
     public int Credit { get; set; }
     public int Sleep { get; set; }
@@ -82,8 +85,6 @@ internal sealed class EditableUpstream
         {
             "http" => "http://127.0.0.1:8080",
             "https" => "https://127.0.0.1:8080",
-            "socks4" => "socks4://127.0.0.1:1080",
-            "socks4a" => "socks4a://127.0.0.1:1080",
             "shadowsocks" => "shadowsocks://aes-256-gcm:password@127.0.0.1:8388",
             "vmess" => "vmess://00000000-0000-0000-0000-000000000000@127.0.0.1:443?net=ws&tls=tls",
             "vless" => "vless://00000000-0000-0000-0000-000000000000@127.0.0.1:443?encryption=none&security=tls",
@@ -105,10 +106,9 @@ internal static partial class EditableTcpRouteConfigCodec
         "trojan", "wireguard", "hysteria2"
     ];
 
-    // SOCKS4/4a remain supported so imported legacy TOML can still round-trip and run.
     internal static readonly string[] ProxySchemes =
     [
-        "socks5", "socks4", "socks4a", "http", "https", "shadowsocks", "vmess", "vless",
+        "socks5", "http", "https", "shadowsocks", "vmess", "vless",
         "trojan", "wireguard", "hysteria2"
     ];
 
@@ -169,7 +169,10 @@ internal static partial class EditableTcpRouteConfigCodec
         {
             builder.AppendLine("[[UpStreams]]");
             builder.AppendLine($"Name={TomlString(upstream.Name.Trim())}");
+            if (!string.IsNullOrEmpty(upstream.Alias)) builder.AppendLine($"Alias={TomlString(upstream.Alias)}");
             builder.AppendLine($"ProxyUrl={TomlString(upstream.ProxyUrl.Trim())}");
+            if (!string.IsNullOrEmpty(upstream.DialProxyFor)) builder.AppendLine($"DialProxyFor={TomlString(upstream.DialProxyFor)}");
+            if (upstream.Remove) builder.AppendLine("Remove=true");
             builder.AppendLine($"DnsResolve={upstream.DnsResolve.ToString().ToLowerInvariant()}");
             builder.AppendLine($"Credit={upstream.Credit}");
             builder.AppendLine($"Sleep={upstream.Sleep}");
@@ -225,6 +228,15 @@ internal static partial class EditableTcpRouteConfigCodec
             if (!decodedValue.Contains(':') || !decodedValue.Contains('@')) return "Shadowsocks URL payload is incomplete.";
             return null;
         }
+        if (new[] { "shadowsocks", "ss" }.Contains(scheme) && payload.Contains('@') &&
+            Uri.TryCreate(text, UriKind.Absolute, out var shadowsocks) && !shadowsocks.UserInfo.Contains(':') &&
+            TryDecodeBase64(shadowsocks.UserInfo, out var encodedShadowsocks))
+        {
+            var decodedValue = Encoding.UTF8.GetString(encodedShadowsocks);
+            // Shadowsocks 2022 encodes method and key material as method:key[:key].
+            if (decodedValue.Contains(':')) return null;
+            return "Shadowsocks URL payload is incomplete.";
+        }
         if (new[] { "vless", "trojan", "wireguard", "hysteria2", "hysteria", "hy2" }.Contains(scheme) && !payload.Contains('@'))
         {
             if (!TryDecodeBase64(payload, out var encoded)) return "Encoded proxy URL payload is incomplete.";
@@ -236,7 +248,7 @@ internal static partial class EditableTcpRouteConfigCodec
         if (!Uri.TryCreate(text, UriKind.Absolute, out var uri) || string.IsNullOrWhiteSpace(uri.Host))
             return "Proxy URL needs a host.";
         if (uri.Port is < 1 or > 65535) return "Proxy URL needs a valid port.";
-        if (new[] { "socks4", "socks4a", "socks5", "http", "https" }.Contains(scheme) && uri.AbsolutePath != "/")
+        if (new[] { "socks5", "http", "https" }.Contains(scheme) && uri.AbsolutePath != "/")
             return "This proxy type does not support a URL path.";
         var userInfo = uri.UserInfo;
         if (new[] { "shadowsocks", "ss" }.Contains(scheme) && (!userInfo.Contains(':') || userInfo.StartsWith(':') || userInfo.EndsWith(':')))
@@ -404,7 +416,10 @@ internal static partial class EditableTcpRouteConfigCodec
             var upstream = new EditableUpstream
             {
                 Name = Value(values, "Name", "proxy"),
+                Alias = Value(values, "Alias", ""),
                 ProxyUrl = Value(values, "ProxyUrl", "socks5://127.0.0.1:1080"),
+                DialProxyFor = Value(values, "DialProxyFor", ""),
+                Remove = bool.TryParse(Value(values, "Remove"), out var remove) && remove,
                 DnsResolve = bool.TryParse(Value(values, "DnsResolve"), out var dns) && dns,
                 Credit = IntValue(values, "Credit"), Sleep = IntValue(values, "Sleep"),
                 CorrectDelay = IntValue(values, "CorrectDelay")
@@ -419,7 +434,7 @@ internal static partial class EditableTcpRouteConfigCodec
 
         foreach (var line in content.Replace("\r\n", "\n").Split('\n'))
         {
-            var trimmed = line.Trim();
+            var trimmed = StripLineComment(line).Trim();
             if (trimmed == "[[UpStreams]]") { FlushUpstream(); upstreamLines = new(); }
             else if (trimmed is "[[UpStreams.Whitelist]]" or "[[UpStreams.Blacklist]]")
             {

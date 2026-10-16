@@ -40,9 +40,10 @@ Path = "geosite:gfw"
 
 - `addr`：TcpRoute2 对外监听地址（SOCKS5、HTTP 与 CONNECT 共用端口）。
 - `Hosts[]`：标准 hosts 规则源；`Path` 支持本地文件或 HTTP(S) URL，`Type` 支持 `base`、`suffix`、`pan`、`regex`，`Credit` 会随每个 DNS 候选参与端口安全过滤。
-- `UpStreams[].Name`：线路名称，仅用于日志显示。
+- `UpStreams[].Name`：线路唯一标识，也用于 `upProxy`、`DialProxyFor` 引用。
+- `UpStreams[].Alias`：可选的可读别名；订阅节点在此保存真实节点名，不参与线路引用。
 - `UpStreams[].ProxyUrl`：代理线路 URL（连接格式见 ProxyClient 文档）。
-- `UpStreams[].DnsResolve`：是否本地先解析域名再连接。旧配置中的 `socks4` 建议开启。
+- `UpStreams[].DnsResolve`：是否本地先解析域名再连接。
 
 - `UpStreams[].Credit`：线路信誉分。
 - `UpStreams[].Sleep`：该线路发起连接前延迟（毫秒）。
@@ -82,12 +83,68 @@ Path = "geosite:gfw"
 socks5://a.b.c.d:1080?upProxy=http://u:p@1.2.3.4:8080
 ```
 
+`upProxy` 也可以直接填写已定义的上游 `Name`，支持前向引用和多级级联：
+
+```toml
+[[UpStreams]]
+Name="entry"
+ProxyUrl="socks5://127.0.0.1:1080"
+
+[[UpStreams]]
+Name="final"
+ProxyUrl="https://proxy.example.com:443?upProxy=entry"
+```
+
+以上连接顺序为 TcpRoute2 → entry → final → 目标地址。启动时会校验名称、重复定义和循环引用；名称不存在时配置不会启动。完整代理 URL 的旧写法继续兼容。
+
 说明：
 
-- 仅建议用于原生 `direct/socks5/http/https` 链路。
-- 其他连接类型的级联能力和限制见 [ProxyClient 文档](https://github.com/GameXG/ProxyClient)。
+- 名称区分大小写；包含空格、`&`、`+` 等特殊字符时，按 URL 查询参数规则编码。
+- 引用只复用该上游的 `ProxyUrl`，不继承它的黑白名单、`DnsResolve`、`Credit`、`Sleep` 或 `CorrectDelay`。
+- 可在 `http/https/socks5` URL 上使用名称引用。当前 ProxyClient 不支持在直连或 Xray 扩展协议 URL 上使用名称引用，此时会明确报错。
 
-### 2.2 URL 内覆盖信用分
+### 2.2 反向声明前置代理 DialProxyFor
+
+在前置线路上指定目标上游 `Name`，载入时组成代理链，不改写目标线路的 TOML：
+
+```toml
+[[UpStreams]]
+Name="sub_mysub_node1"
+ProxyUrl="socks5://127.0.0.1:1080"
+DialProxyFor="exit"
+
+[[UpStreams]]
+Name="exit"
+ProxyUrl="https://proxy.example.com:443"
+```
+
+该链路连接顺序为 TcpRoute2 → sub_mysub_node1 → exit → 目标。
+设置 `DialProxyFor` 只增加前置用途，线路仍按自己的黑白名单、信誉度和延迟参与普通请求竞速。目标线路无需引用订阅节点；取消前置节点后，目标按自己的原始 `ProxyUrl` 连接，不残留对已删除节点的引用。
+
+- `DialProxyFor` 支持用逗号分隔多个 `Name` 选择器，区分大小写；允许前向引用和多级链。只匹配 `Name`，不匹配显示用的 `Alias`。
+- 每个选择器优先精确匹配；没有同名节点时按前缀匹配。末尾加 `*` 可明确按前缀匹配，即使存在同名前缀节点。重叠选择器会去重，不会重复生成同一前置关系。
+- 禁止单独的 `*`，包括多目标列表中的 `*`；也禁止精确、前缀或列表匹配到声明节点自身。`tw_0*` 这类非空前缀允许使用。
+- 同一条线路的 `DialProxyFor` 与 URL `upProxy` 互斥；被 `DialProxyFor` 指向的目标也不能同时自行配置 `upProxy`。
+- 多条前置指向同一目标时，生成独立链路候选并按目标线路的策略竞速。各链路有独立缓存身份；每个目标最多 256 个候选。
+- 每个选择器都必须匹配至少一个目标；自指、循环、冲突和不支持的协议会在载入时报错。匹配到的 `Remove=true` 节点不生成链路。
+- 继承的是前置的代理 URL；目标的 `DnsResolve`、`Credit`、`Sleep`、`CorrectDelay` 和黑白名单仍属于目标线路，不继承前置线路的这些策略参数。
+  例如 A 的 `Sleep=3000`、B 的 `Sleep=25`：A 单独竞速时延迟 3000 毫秒；经 A 加速的 B 只按 25 毫秒参与竞速。
+  订阅池中已知节点取消选中时删除其 TOML 表及附属规则，重选时使用当前订阅值和默认值。仅对订阅或已验证节点池中找不到的节点保留 `Remove=true` 保护；缓存暂不可用时保留现有配置。显式 `upProxy` 引用必须保持有效，否则取消操作报错并保留原文件。
+- 当前 ProxyClient 允许 HTTP/HTTPS/SOCKS 作为接收前置的目标协议；不能为直连或 Xray 扩展协议目标配置此项。前置本身仍可使用这些协议。
+- 原有显式 `upProxy=节点名` 继续兼容，也仍要求被引用节点存在。需自由取消订阅前置时，使用上面的反向声明方式。
+
+例如让 A 作为三个台湾节点的前置，加速这些节点的访问：
+
+```toml
+[[UpStreams]]
+Name="A"
+ProxyUrl="socks5://127.0.0.1:1080"
+DialProxyFor="tw_0"
+```
+
+当配置中有 `tw_0111`、`tw_0da`、`tw_0232_11aa` 且没有精确名称 `tw_0` 时，分别生成 `TcpRoute2 → A → 匹配节点 → 目标`，不是把匹配节点当作 A 的前置。`DialProxyFor="tw_0*,hk_*"` 可同时加速两个前缀组。
+
+### 2.3 URL 内覆盖信用分
 
 可以在 URL 里写 `credit` 覆盖 `UpStreams[].Credit`：
 
@@ -109,21 +166,17 @@ direct://0.0.0.0:0000?localAddr=192.168.1.10:0
 
 - `localAddr`：本地出口地址（可选），默认 `:0`。
 
-## 3.2 socks5 与旧版 socks4 / socks4a 兼容
+## 3.2 socks5
 
 格式：
 
 ```text
 socks5://host:port
-socks4://host:port
-socks4a://host:port
 ```
 
 说明：
 
-- 可视化客户端只提供 `socks5` 的新建入口。
-- `socks4`、`socks4a` 仅用于载入、保存和运行已有或导入的 v1.x TOML，不建议用于新配置。
-- `socks4` 不支持远端域名解析，建议 `DnsResolve=true`。
+- 可视化客户端提供 `socks5` 的新建入口。
 - 当前 `socks5` 按无认证方式使用（不配置用户名密码）。
 
 ## 3.3 http / https

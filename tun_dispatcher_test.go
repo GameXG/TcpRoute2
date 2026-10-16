@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net"
 	"strings"
@@ -73,6 +74,89 @@ func TestTunIPv6AndUDPPolicy(t *testing.T) {
 	}
 	if len(pool.calls) != 0 {
 		t.Fatal("disabled traffic reached the route pool")
+	}
+}
+
+func TestTunFeatureSwitchesAndProcessBypass(t *testing.T) {
+	stun := make([]byte, 20)
+	binary.BigEndian.PutUint32(stun[4:8], 0x2112a442)
+	for _, feature := range []struct {
+		name        string
+		destination xnet.Destination
+		payload     []byte
+	}{
+		{"TCPROUTE_ALLOW_STUN", xnet.UDPDestination(xnet.ParseAddress("192.0.2.1"), 9999), stun},
+		{"TCPROUTE_ALLOW_QUIC", xnet.UDPDestination(xnet.ParseAddress("192.0.2.1"), 443), []byte("quic")},
+		{"TCPROUTE_ENABLE_IPV6", xnet.TCPDestination(xnet.ParseAddress("2001:db8::1"), 22), []byte("ipv6-tcp")},
+		{"TCPROUTE_ENABLE_IPV6", xnet.UDPDestination(xnet.ParseAddress("2001:db8::1"), 123), []byte("ipv6-udp")},
+	} {
+		for _, enabled := range []bool{false, true} {
+			for _, mode := range []string{"none", "process", "destination"} {
+				bypass := mode != "none"
+				t.Run(fmt.Sprintf("%s/%s/enabled=%t/bypass=%s", feature.name, feature.destination.Network, enabled, mode), func(t *testing.T) {
+					t.Setenv("TCPROUTE_ALLOW_STUN", "false")
+					t.Setenv("TCPROUTE_ALLOW_QUIC", "false")
+					t.Setenv("TCPROUTE_ENABLE_IPV6", "false")
+					t.Setenv(feature.name, fmt.Sprint(enabled))
+					pool := &recordingTunUpstream{calls: make(chan string, 1)}
+					direct := &recordingTunUpstream{calls: make(chan string, 1)}
+					d := &tunDispatcher{upstream: pool,
+						bypass: func(context.Context, xnet.Destination) (bool, error) { return bypass, nil },
+						directDial: func(_ context.Context, network, address string) (net.Conn, error) {
+							conn, _, err := direct.DialTimeout(network, address, 0)
+							return conn, err
+						},
+					}
+					if mode == "destination" {
+						rule, err := compileTunBypassRule(tunBypassRuleConfig{
+							Network:      strings.ToLower(feature.destination.Network.String()),
+							Destinations: []string{feature.destination.Address.IP().String()},
+							Ports:        []string{fmt.Sprint(feature.destination.Port.Value())},
+						})
+						if err != nil {
+							t.Fatal(err)
+						}
+						policy := &tunBypassPolicy{rules: []tunBypassRule{rule}}
+						d.bypass = policy.match
+					}
+					client, server := net.Pipe()
+					defer client.Close()
+					defer server.Close()
+					_ = client.SetDeadline(time.Now().Add(3 * time.Second))
+					ctx, cancel := context.WithCancel(context.Background())
+					defer cancel()
+					done := make(chan error, 1)
+					go func() {
+						done <- d.DispatchLink(ctx, feature.destination, &transport.Link{Reader: buf.NewReader(server), Writer: buf.NewWriter(server)})
+					}()
+					go func() { _, _ = client.Write(feature.payload) }()
+					if enabled || bypass {
+						reply := make([]byte, len(feature.payload))
+						if _, err := io.ReadFull(client, reply); err != nil || string(reply) != string(feature.payload) {
+							t.Fatalf("forwarded reply=%x err=%v", reply, err)
+						}
+						cancel()
+					}
+					select {
+					case err := <-done:
+						if !enabled && !bypass && err == nil {
+							t.Fatal("disabled traffic accepted")
+						}
+					case <-time.After(3 * time.Second):
+						t.Fatal("forwarding did not finish")
+					}
+					wantDirect, wantPool := 0, 0
+					if bypass {
+						wantDirect = 1
+					} else if enabled {
+						wantPool = 1
+					}
+					if len(direct.calls) != wantDirect || len(pool.calls) != wantPool {
+						t.Fatalf("direct=%d pool=%d", len(direct.calls), len(pool.calls))
+					}
+				})
+			}
+		}
 	}
 }
 
