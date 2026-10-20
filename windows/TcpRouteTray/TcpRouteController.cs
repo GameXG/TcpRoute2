@@ -570,17 +570,23 @@ internal sealed class TcpRouteController : IDisposable
 
         var tunReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var proxyReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        string? startupError = null;
         process.OutputDataReceived += (_, args) =>
         {
             if (args.Data == "TCPROUTE_WINTUN_READY") tunReady.TrySetResult();
             else if (args.Data == "TCPROUTE_PROXY_READY") proxyReady.TrySetResult();
             else AppendLogLine(args.Data);
         };
-        process.ErrorDataReceived += (_, args) => AppendLogLine(args.Data);
+        process.ErrorDataReceived += (_, args) =>
+        {
+            if (!string.IsNullOrWhiteSpace(args.Data)) startupError = args.Data.Trim();
+            AppendLogLine(args.Data);
+        };
         process.Exited += (_, _) =>
         {
             if (network is not null) tunReady.TrySetException(new InvalidOperationException("TcpRoute2 exited before Wintun was ready."));
-            proxyReady.TrySetException(new InvalidOperationException("TcpRoute2 exited before the local proxy was ready."));
+            var detail = string.IsNullOrWhiteSpace(startupError) ? "no core error was reported" : startupError;
+            proxyReady.TrySetException(new InvalidOperationException($"TcpRoute2 exited with code {process.ExitCode} before the local proxy was ready: {detail}"));
             System.Windows.Application.Current?.Dispatcher.BeginInvoke(new Action(() =>
             {
                 if (!_starting && ReferenceEquals(_process, process))
