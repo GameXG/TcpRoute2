@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/url"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -102,7 +103,6 @@ func TestResolveUpstreamProxyRejectsAmbiguousQueries(t *testing.T) {
 		"http://127.0.0.1:1?upProxy=",
 		"http://127.0.0.1:1?upProxy=%zz",
 		"direct://0.0.0.0:0?upProxy=entry",
-		"vless://id@127.0.0.1:1?upProxy=entry",
 	} {
 		_, err := resolveUpstreamProxyReferences([]ServerConfigUpStream{
 			{Name: "final", ProxyUrl: raw}, {Name: "entry", ProxyUrl: "http://127.0.0.1:2"},
@@ -111,7 +111,14 @@ func TestResolveUpstreamProxyRejectsAmbiguousQueries(t *testing.T) {
 			t.Fatalf("invalid or unsupported chain accepted: %s", raw)
 		}
 	}
-	_, err := resolveUpstreamProxyReferences([]ServerConfigUpStream{
+	resolved, err := resolveUpstreamProxyReferences([]ServerConfigUpStream{
+		{Name: "front", ProxyUrl: "http://127.0.0.1:1", DialProxyFor: "target"},
+		{Name: "target", ProxyUrl: "ss://aes-256-gcm:password@127.0.0.1:2"},
+	})
+	if err != nil || !strings.Contains(resolved[1].ProxyUrl, "upProxy=http") {
+		t.Fatalf("extension target did not accept a front proxy: %#v, %v", resolved, err)
+	}
+	_, err = resolveUpstreamProxyReferences([]ServerConfigUpStream{
 		{Name: "self", ProxyUrl: "http://127.0.0.1:1?upProxy=" + url.QueryEscape("http://127.0.0.1:2?upProxy=self")},
 	})
 	if err == nil {

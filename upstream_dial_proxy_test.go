@@ -136,7 +136,7 @@ func TestDialProxyForPrefixRejectsInvalidGroups(t *testing.T) {
 		{{Name: "A", Remove: true, ProxyUrl: "socks5://a.test:1", DialProxyFor: "A*"}},
 		{{Name: "A", ProxyUrl: "socks5://a.test:1", DialProxyFor: "tw_0,*"}, {Name: "tw_0111", ProxyUrl: "http://b.test:1"}},
 		{{Name: "a_one", ProxyUrl: "http://a.test:1", DialProxyFor: "b_"}, {Name: "b_one", ProxyUrl: "http://b.test:1", DialProxyFor: "a_"}},
-		{{Name: "A", ProxyUrl: "socks5://a.test:1", DialProxyFor: "tw_0"}, {Name: "tw_0111", ProxyUrl: "vless://id@b.test:1"}},
+		{{Name: "A", ProxyUrl: "socks5://a.test:1", DialProxyFor: "tw_0"}, {Name: "tw_0111", ProxyUrl: "ftp://b.test:1"}},
 		{{Name: "A", ProxyUrl: "socks5://a.test:1", DialProxyFor: "tw_0,missing"}, {Name: "tw_0111", ProxyUrl: "http://b.test:1"}},
 	} {
 		if _, err := resolveUpstreamProxyReferences(input); err == nil {
@@ -193,7 +193,7 @@ func TestDialProxyForRejectsConflictsAndCycles(t *testing.T) {
 		"unknown target":     {{Name: "front", ProxyUrl: "http://127.0.0.1:1", DialProxyFor: "missing"}},
 		"self":               {{Name: "front", ProxyUrl: "http://127.0.0.1:1", DialProxyFor: "front"}},
 		"cycle":              {{Name: "a", ProxyUrl: "http://127.0.0.1:1", DialProxyFor: "b"}, {Name: "b", ProxyUrl: "http://127.0.0.1:2", DialProxyFor: "a"}},
-		"unsupported target": {{Name: "front", ProxyUrl: "http://127.0.0.1:1", DialProxyFor: "target"}, {Name: "target", ProxyUrl: "vless://id@127.0.0.1:2"}},
+		"unsupported target": {{Name: "front", ProxyUrl: "http://127.0.0.1:1", DialProxyFor: "target"}, {Name: "target", ProxyUrl: "ftp://127.0.0.1:2"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := resolveUpstreamProxyReferences(configs); err == nil {

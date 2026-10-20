@@ -6,6 +6,7 @@ import (
 	"github.com/GameXG/TcpRoute2/netchan"
 	"log"
 	"net"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -78,7 +79,7 @@ type dialTimeoutRes struct {
 
 func (su *tcppingUpStream) AddUpStream(name, proxyUrl string, dnsResolve bool, credit int, sleep time.Duration, correctDelay time.Duration) error {
 	// 加入线路
-	pc, err := proxyclient.NewProxyClient(proxyUrl)
+	pc, err := newProxyClientWithUpstream(proxyUrl)
 	if err != nil {
 		return fmt.Errorf("无法创建上级代理：%v", err)
 	}
@@ -109,6 +110,38 @@ func (su *tcppingUpStream) AddUpStream(name, proxyUrl string, dnsResolve bool, c
 		correctDelay: correctDelay,
 	})
 	return nil
+}
+
+// ProxyClient's Xray wrappers expose SetUpProxy, but its URL factory does not
+// connect that field for extension protocols. Bind the parsed parent explicitly
+// after creating the child without the upProxy query.
+func newProxyClientWithUpstream(raw string) (proxyclient.ProxyClient, error) {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return nil, err
+	}
+	query, err := url.ParseQuery(parsed.RawQuery)
+	if err != nil {
+		return nil, err
+	}
+	values, ok := query["upProxy"]
+	if !ok || len(values) != 1 || strings.TrimSpace(values[0]) == "" {
+		return proxyclient.NewProxyClient(raw)
+	}
+	parent, err := newProxyClientWithUpstream(values[0])
+	if err != nil {
+		return nil, fmt.Errorf("create upProxy: %w", err)
+	}
+	delete(query, "upProxy")
+	parsed.RawQuery = query.Encode()
+	child, err := proxyclient.NewProxyClient(parsed.String())
+	if err != nil {
+		return nil, err
+	}
+	if err := child.SetUpProxy(parent); err != nil {
+		return nil, fmt.Errorf("bind upProxy: %w", err)
+	}
+	return child, nil
 }
 
 func (su *tcppingUpStream) AddConfiguredUpStream(config ServerConfigUpStream, baseDir string) error {

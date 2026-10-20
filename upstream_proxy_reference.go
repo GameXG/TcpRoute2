@@ -30,7 +30,7 @@ func proxyURLParts(raw, owner string) (*url.URL, url.Values, string, error) {
 
 func proxyAcceptsParent(scheme string) bool {
 	switch strings.ToLower(scheme) {
-	case "http", "https", "socks5":
+	case "http", "https", "socks5", "socks4", "socks4a", "ss", "shadowsocks", "vmess", "vless", "trojan", "wireguard", "hysteria", "hysteria2", "hy2":
 		return true
 	}
 	return false
@@ -89,7 +89,7 @@ func resolveUpstreamProxyReferences(configs []ServerConfigUpStream) ([]ServerCon
 				return nil, fmt.Errorf("upstream %q: upProxy conflicts with incoming DialProxyFor", configs[target].Name)
 			}
 			if !proxyAcceptsParent(parsed.Scheme) {
-				return nil, fmt.Errorf("upstream %q: DialProxyFor chaining is not supported on %s by the pinned ProxyClient", configs[target].Name, parsed.Scheme)
+				return nil, fmt.Errorf("upstream %q: DialProxyFor chaining is not supported on %s", configs[target].Name, parsed.Scheme)
 			}
 			parents[target] = append(parents[target], index)
 		}

@@ -297,8 +297,10 @@ combine `DialProxyFor` and `UpProxy` options or a URL `upProxy`; the receiver
 cannot have an explicit `upProxy` either. Several front nodes create competing
 chain candidates. Each front node also retains ordinary routing under its own
 rules, credit, and delay; the composed chain uses the receiver's policies and
-delays. The receiving protocol must be
-HTTP/HTTPS/SOCKS with the current ProxyClient. See [the core reference](../help.md#22-反向声明前置代理-dialproxyfor).
+delays. The receiving protocol may be HTTP/HTTPS/SOCKS or a supported Xray
+extension protocol. TcpRoute2 binds the front proxy after creating the
+extension client. Direct cannot receive a front proxy. See [the core
+reference](../help.md#22-反向声明前置代理-dialproxyfor).
 
 The program manages `Name` as `sub_<subscription-name>_<stable-node-id>` and
 stores the real node name in `Alias`, for example:
