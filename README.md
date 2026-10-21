@@ -10,7 +10,7 @@ TcpRoute2 is a TCP router that selects the fastest successful connection across 
 
 It supports per-upstream whitelists and blacklists, independent hosts files, route and Host candidate trust levels, and recovery of destination domains from HTTP Host or TLS SNI. These preserve the original TcpRoute2 routing principles while adding DoH, Geosite/GeoIP, and maintained Windows and Android clients.
 
-SOCKS5, HTTP proxy, and HTTPS CONNECT share one listener port.
+SOCKS4, SOCKS4a, SOCKS5, HTTP proxy, and HTTPS CONNECT share one listener port.
 
 Upstream proxy connections are provided by [ProxyClient](https://github.com/GameXG/ProxyClient); see its documentation for supported protocols and connection parameters. TcpRoute2 owns route selection, rule matching, DNS scheduling, and client system integration, and maintains a required built-in Direct route.
 
@@ -167,7 +167,7 @@ Type = "base"
 
 ### Listener and Upstream Fields
 
-- `addr`: TCP listener shared by SOCKS5, HTTP, and CONNECT; defaults to `127.0.0.1:7070`.
+- `addr`: TCP listener shared by SOCKS4, SOCKS4a, SOCKS5, HTTP, and CONNECT; defaults to `127.0.0.1:7070`.
 - `PreHttpPorts` / `PreHttpsPorts`: ports where TcpRoute2 reads HTTP Host or TLS SNI to recover domains already resolved to IPs by SOCKS clients. If both fields are omitted, defaults are `[80]` and `[443]`. Use `[0]` to explicitly disable the corresponding type.
 - `UpStreams[].Name`: unique route name used in output and the UI.
 - `UpStreams[].ProxyUrl`: complete proxy URL parsed by ProxyClient.
@@ -248,7 +248,7 @@ If any whitelist matches, only upstreams with matching whitelists participate in
 
 ### Upstream Connections
 
-Named `upProxy` references are case-sensitive and reuse only the referenced `ProxyUrl`, without inheriting routing rules, DNS resolution, credit, or delays. Set this parameter on HTTP/HTTPS/SOCKS URLs; Direct and Xray extension URLs cannot use named `upProxy` with the current ProxyClient. See [the chain example](help.md#21-级联代理-upproxy).
+Named `upProxy` references are case-sensitive and reuse only the referenced `ProxyUrl`, without inheriting routing rules, DNS resolution, credit, or delays. Set this parameter on HTTP/HTTPS/SOCKS or Xray extension URLs; Direct cannot receive an `upProxy`. See [the chain example](help.md#21-级联代理-upproxy).
 
 `ProxyUrl` accepts a complete proxy URL supported by [ProxyClient](https://github.com/GameXG/ProxyClient). Android's visual editor selects the proxy type first and validate the complete URL before saving. Direct is maintained automatically; legacy connection types in existing v1.x TOML remain compatible. See [help.md](help.md) for TcpRoute2 configuration and ProxyClient documentation for protocol and TLS parameters.
 

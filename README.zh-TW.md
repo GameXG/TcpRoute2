@@ -11,7 +11,7 @@ TcpRoute2 是一個 TCP 層路由器，會為 TCP 連接從多條線路（允許
 
 支援線路級黑白名單、獨立於作業系統的 hosts 檔案、線路和 Host 候選位址的信譽度，以及透過 HTTP Host / TLS SNI 恢復目標域名。這些能力延續了原版 TcpRoute2 的路由原則，並增加了 DoH、Geosite/GeoIP，以及持續維護的 Windows 和 Android 客戶端。
 
-通過同一監聽端口提供 SOCKS5、HTTP 代理和 HTTPS CONNECT 服務。
+通過同一監聽端口提供 SOCKS4、SOCKS4a、SOCKS5、HTTP 代理和 HTTPS CONNECT 服務。
 
 上游代理連接由 [ProxyClient](https://github.com/GameXG/ProxyClient) 提供，具體協議和連接參數見其文檔。TcpRoute2 負責線路選擇、規則匹配、DNS 調度及客戶端系統集成，並維護必需的內置直連線路。
 
@@ -170,7 +170,7 @@ Type = "base"
 
 ### 頂層和上游字段
 
-- `addr`：SOCKS5、HTTP 和 CONNECT 共用的 TCP 監聽地址，默認 `127.0.0.1:7070`。
+- `addr`：SOCKS4、SOCKS4a、SOCKS5、HTTP 和 CONNECT 共用的 TCP 監聽地址，默認 `127.0.0.1:7070`。
 - `PreHttpPorts` / `PreHttpsPorts`：當 SOCKS 客戶端已經把域名解析為 IP 時，TcpRoute2 在指定端口預讀 HTTP Host 或 TLS SNI 來恢復域名。兩項都省略時默認分別為 `[80]` 和 `[443]`；可使用 `[0]` 顯式關閉對應類型。
 - `UpStreams[].Name`：線路名稱，用於日誌和界面顯示；名稱不能重復。
 - `UpStreams[].ProxyUrl`：由 ProxyClient 解析的完整代理 URL。
@@ -279,7 +279,7 @@ Android 從右上角「訂閱」選單新增訂閱、更新和選取節點，詳
 
 訂閱回應可以是每行一個代理 URL 的清單、Base64 編碼清單、JSON 節點陣列、完整 Clash YAML 設定或完整 Surge 設定。程式會提取 Clash 的 `proxies:` 和 Surge 的 `[Proxy]` 條目。在系統匣選單中更新訂閱並選取節點；生成的 `Name` 使用 `sub_<訂閱名>_<節點ID>`，`Alias` 儲存節點真實名稱。客戶端選取項目和排除項目統一使用穩定 ID。支援的代理類型、JSON 節點欄位、預設值、鎖定欄位、`UserAgent`、排除項和更新行為見 [Windows 訂閱說明](windows/README.md#subscriptions)。
 
-`upProxy` 名稱區分大小寫，只複用被引用的 `ProxyUrl`，不繼承規則、DNS 解析、信譽度或延遲。請在 HTTP/HTTPS/SOCKS URL 上設定；目前 ProxyClient 不支援在直連或 Xray 擴充協定 URL 上設定名稱引用。範例見 [級聯代理說明](help.md#21-级联代理-upproxy)。
+`upProxy` 名稱區分大小寫，只複用被引用的 `ProxyUrl`，不繼承規則、DNS 解析、信譽度或延遲。請在 HTTP/HTTPS/SOCKS 或 Xray 擴充協定 URL 上設定；直連不能接收 `upProxy`。範例見 [級聯代理說明](help.md#21-级联代理-upproxy)。
 
 上游可設定 `DialProxyFor="目標Name"`，載入時增加作為目標上游前置的用途，同時仍按自己的規則、信譽度和延遲參與一般請求選路。支援逗號分隔多個名稱或前綴，例如 `DialProxyFor="tw_0,hk_*"`；優先精確匹配，找不到同名節點時按前綴匹配，末尾 `*` 明確按前綴匹配。匹配使用 `Name`，不使用 `Alias`；禁止單獨的 `*` 和匹配自身。它與 URL 的 `upProxy` 互斥；目標也不能同時指定 `upProxy`。多個前置組成不同鏈路競速，刪除訂閱前置後不會在目標 TOML 中留下引用。詳見 [DialProxyFor](help.md#22-反向声明前置代理-dialproxyfor)。
 

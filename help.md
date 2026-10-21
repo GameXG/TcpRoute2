@@ -38,7 +38,7 @@ Path = "geosite:gfw"
 
 字段说明：
 
-- `addr`：TcpRoute2 对外监听地址（SOCKS5、HTTP 与 CONNECT 共用端口）。
+- `addr`：TcpRoute2 对外监听地址（SOCKS4、SOCKS4a、SOCKS5、HTTP 与 CONNECT 共用端口）。
 - `Hosts[]`：标准 hosts 规则源；`Path` 支持本地文件或 HTTP(S) URL，`Type` 支持 `base`、`suffix`、`pan`、`regex`，`Credit` 会随每个 DNS 候选参与端口安全过滤。
 - `UpStreams[].Name`：线路唯一标识，也用于 `upProxy`、`DialProxyFor` 引用。
 - `UpStreams[].Alias`：可选的可读别名；订阅节点在此保存真实节点名，不参与线路引用。
@@ -101,7 +101,7 @@ ProxyUrl="https://proxy.example.com:443?upProxy=entry"
 
 - 名称区分大小写；包含空格、`&`、`+` 等特殊字符时，按 URL 查询参数规则编码。
 - 引用只复用该上游的 `ProxyUrl`，不继承它的黑白名单、`DnsResolve`、`Credit`、`Sleep` 或 `CorrectDelay`。
-- 可在 `http/https/socks5` URL 上使用名称引用。当前 ProxyClient 不支持在直连或 Xray 扩展协议 URL 上使用名称引用，此时会明确报错。
+- 可在 `http/https/socks4/socks4a/socks5` 或 Xray 扩展协议 URL 上使用名称引用；直连不能接收名称引用，此时会明确报错。
 
 ### 2.2 反向声明前置代理 DialProxyFor
 

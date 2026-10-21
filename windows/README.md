@@ -19,7 +19,7 @@ listener and `ALL_PROXY` to its `socks5h://` address, using the running listener
 port (or the configured port when stopped). Paste and execute the commands in
 the matching terminal; they affect only that terminal and its child processes.
 
-Proxy mode exposes SOCKS5, HTTP, and CONNECT on one listener. Optional Windows
+Proxy mode exposes SOCKS4, SOCKS4a, SOCKS5, HTTP, and CONNECT on one listener. Optional Windows
 system proxy settings are restored on stop. TUN / VPN (Wintun) mode uses the
 pinned xray-core TUN stack and requests administrator privileges through UAC.
 Modes are mutually exclusive; system proxy and LAN controls are unavailable in

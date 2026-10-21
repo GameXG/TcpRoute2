@@ -2,7 +2,7 @@
 # https://github.com/GameXG/TcpRoute2
 
 # 监听地址
-# 同一端口提供 SOCKS5、HTTP 代理和 HTTPS CONNECT。
+# 同一端口提供 SOCKS4、SOCKS4a、SOCKS5、HTTP 代理和 HTTPS CONNECT。
 addr="127.0.0.1:7070"
 
 # DNS sources are optional. Lower Priority runs first; ties keep TOML order.
@@ -53,7 +53,7 @@ Name="https-proxy.com"
 # DialProxyFor 与本线路 URL 的 upProxy 互斥，目标也不能配置 upProxy。
 # 多个前置指向同一目标时组成多条链路竞速；各节点也保留普通请求选路资格及自身策略。
 # 名称区分大小写；仅复用 ProxyUrl，不继承规则、DnsResolve、Credit 或延迟。
-# 名称引用支持 http/https/socks5 URL；不支持在直连或 Xray 扩展协议 URL 上设置。
+# 名称引用支持 http/https/socks4/socks4a/socks5 和 Xray 扩展协议 URL；直连不能接收。
 # shadowsocks 代理 shadowsocks://method:password@123.123.123:5050
 # shadowsocks/vmess/vless/trojan/wireguard/hysteria2 由 ProxyClient 内置 xray-core 统一处理（兼容 ss/hysteria/hy2）
 # vmess 示例 vmess://base64(json)

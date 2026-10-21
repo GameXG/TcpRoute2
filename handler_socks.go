@@ -48,8 +48,9 @@ func (sev *hSocksServer) New(conn net.Conn) (h Handler, rePre bool, err error) {
 		return nil, true, io.EOF
 	}
 
-	//TODO: 可以进行更详细的判断，例如长度，前几个值可能的范围。
-	if b[0] == 0x05 {
+	// SOCKS4/4a and SOCKS5 share this listener. The complete request is
+	// parsed by Handle after the pre-read buffer is rewound by the switcher.
+	if b[0] == 0x04 || b[0] == 0x05 {
 		return &hSocksHandle{sev, conn}, true, nil
 	} else {
 		err = NoHandleError("协议头不正确。")
@@ -58,7 +59,7 @@ func (sev *hSocksServer) New(conn net.Conn) (h Handler, rePre bool, err error) {
 }
 
 func (h *hSocksHandle) String() string {
-	return "Socks5"
+	return "Socks4/4a/5"
 }
 
 // 实际处理 Socks 协议
@@ -73,9 +74,70 @@ func (h *hSocksHandle) Handle() error {
 
 	if b[0] == 0x05 {
 		return h.handleSocks5()
+	} else if b[0] == 0x04 {
+		return h.handleSocks4()
 	} else {
 		return NoHandleError("无法识别的协议。")
 	}
+}
+
+func (h *hSocksHandle) handleSocks4() error {
+	conn := h.conn
+	request := make([]byte, 7)
+	if _, err := io.ReadFull(conn, request); err != nil {
+		return fmt.Errorf("读取 SOCKS4 请求失败：%v", err)
+	}
+	cmd := request[0]
+	port := binary.BigEndian.Uint16(request[1:3])
+	ip := net.IP(request[3:7])
+	if _, err := readSocks4String(conn); err != nil {
+		return fmt.Errorf("读取 SOCKS4 用户标识失败：%v", err)
+	}
+
+	host := ip.String()
+	if request[3] == 0 && request[4] == 0 && request[5] == 0 && request[6] != 0 {
+		var err error
+		host, err = readSocks4String(conn)
+		if err != nil {
+			return fmt.Errorf("读取 SOCKS4a 域名失败：%v", err)
+		}
+		if host == "" {
+			return fmt.Errorf("SOCKS4a 域名为空")
+		}
+	}
+	if cmd != 0x01 {
+		_ = writeSocks4Reply(conn, 0x5b, nil, 0)
+		return fmt.Errorf("不支持的 SOCKS4 命令：%v", cmd)
+	}
+	return h.handleRoutedConnect(host, port, 4)
+}
+
+func readSocks4String(conn io.Reader) (string, error) {
+	value := make([]byte, 0, 32)
+	var one [1]byte
+	for len(value) <= 255 {
+		if _, err := io.ReadFull(conn, one[:]); err != nil {
+			return "", err
+		}
+		if one[0] == 0 {
+			return string(value), nil
+		}
+		value = append(value, one[0])
+	}
+	return "", fmt.Errorf("SOCKS4 字段过长")
+}
+
+func writeSocks4Reply(conn io.Writer, code byte, address net.IP, port uint16) error {
+	var ip4 net.IP
+	if address != nil {
+		ip4 = address.To4()
+	}
+	if ip4 == nil {
+		ip4 = net.IPv4zero.To4()
+	}
+	reply := []byte{0x00, code, byte(port >> 8), byte(port), ip4[0], ip4[1], ip4[2], ip4[3]}
+	_, err := conn.Write(reply)
+	return err
 }
 
 func (h *hSocksHandle) handleSocks5() error {
@@ -159,19 +221,38 @@ func (h *hSocksHandle) handleSocks5() error {
 		conn.Write([]byte{0x05, 0x07, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 		return fmt.Errorf("不支持的命令。ver=%v,cmd=%v", ver, cmd)
 	}
+	return h.handleRoutedConnect(host, prot, 5)
+}
+
+func (h *hSocksHandle) handleRoutedConnect(host string, prot uint16, version byte) error {
+	conn := h.conn
+	replySuccess := func() error {
+		if version == 4 {
+			return writeSocks4Reply(conn, 0x5a, nil, 0)
+		}
+		_, err := conn.Write([]byte{0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+		return err
+	}
+	replyFailure := func() {
+		if version == 4 {
+			_ = writeSocks4Reply(conn, 0x5b, nil, 0)
+			return
+		}
+		_, _ = conn.Write([]byte{0x05, 0x04, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	}
+
 	if environmentEnabled("TCPROUTE_TUN_DNS") && host == "198.18.0.1" && prot == 53 {
-		if _, err := conn.Write([]byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0}); err != nil {
+		if err := replySuccess(); err != nil {
 			return err
 		}
 		return forwardTunTCPDNS(context.Background(), conn)
 	}
 
 	conn.SetDeadline(time.Now().Add(handlerTimeoutForward))
-
 	rAddr := net.JoinHostPort(host, strconv.FormatUint(uint64(prot), 10))
 	preProtocol := CheckPre("tcp", rAddr)
 	if preProtocol != preProtocolUnknown {
-		if _, err := conn.Write([]byte{0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}); err != nil {
+		if err := replySuccess(); err != nil {
 			return fmt.Errorf("回应客户端命令失败：%v", err)
 		}
 		nextConn, nextAddress, ok := Pre(conn, rAddr, preProtocol)
@@ -182,77 +263,36 @@ func (h *hSocksHandle) handleSocks5() error {
 		rAddr = nextAddress
 	}
 
-	// 连接目标网站
-	upStrrem := h.hSocksServer.upStream
-	oConn, oConnErrorReporting, err := upStrrem.DialTimeout("tcp", rAddr, handlerNewTimeout)
+	oConn, oConnErrorReporting, err := h.hSocksServer.upStream.DialTimeout("tcp", rAddr, handlerNewTimeout)
 	if err != nil {
 		conn.SetDeadline(time.Now().Add(handlerTimeoutHello))
 		if preProtocol == preProtocolUnknown {
-			conn.Write([]byte{0x05, 0x04, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+			replyFailure()
 		}
 		return fmt.Errorf("无法连接目标网站( %v )，详细错误：%v", rAddr, err)
 	}
 	defer oConn.Close()
 
-	// 获得远端的 IP 及端口
-	rIp := make([]byte, 4, 16)
-	rPort := make([]byte, 2)
-	if v, ok := conn.RemoteAddr().(*net.TCPAddr); ok {
-		if ip4 := v.IP.To4(); ip4 != nil {
-			rIp = []byte(ip4)
-		} else {
-			rIp = []byte(v.IP)
-		}
-		switch len(rIp) {
-		case 4, 16:
-		default:
-			log.Printf("未知的IP地址类型，IP：%v", rIp)
-			rIp = make([]byte, 4)
-		}
-		binary.BigEndian.PutUint16(rPort, uint16(v.Port))
-	}
-
-	// 生成返回的消息
-	b = b[:0]
-	b = append(b, 0x05, 0x00, 0x00)
-	if len(rIp) == 4 {
-		b = append(b, 0x01)
-	} else {
-		b = append(b, 0x04)
-	}
-	b = append(b, rIp...)
-	b = append(b, rPort...)
-
 	if preProtocol == preProtocolUnknown {
-		if _, err := conn.Write(b); err != nil {
+		if err := replySuccess(); err != nil {
 			return fmt.Errorf("回应客户端命令失败：%v", err)
 		}
 	}
 
-	fCount := forwardCount{} //转发计数
-
+	fCount := forwardCount{}
 	startTime := time.Now()
 	err = forwardConn(conn, oConn, handlerTimeoutForward, &fCount)
 	endTime := time.Now()
-
-	// 识别异常状态
-	// 连接被重置、未收到任何数据
 	if oConnErrorReporting != nil {
 		connTime := endTime.Sub(startTime)
 		lsend := atomic.LoadUint64(&fCount.send)
 		lrecv := atomic.LoadUint64(&fCount.recv)
-
-		// 连接建立时间小于60秒，并且未收到任何数据
 		if connTime < 60*time.Second && lrecv == 0 && lsend > 50 {
 			oConnErrorReporting.Report(ErrConnTypeRead0)
 		}
-
 		if connTime < 1*time.Second && lrecv < 1024 && prot == 443 && lsend > 50 {
 			oConnErrorReporting.Report(ErrConnTypeRead0)
 		}
 	}
-
-	//fmt.Printf("接收：%v ,发送：%v\r\n", fCount.recv, fCount.send)
-
 	return err
 }

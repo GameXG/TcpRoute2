@@ -35,10 +35,6 @@ func (sh *switchHandlerNewer) New(conn net.Conn) (h Handler, rePre bool, err err
 		b = b[:n]
 	}
 	pc.ResetPreOffset()
-	if len(b) > 0 && b[0] == 0x04 {
-		return nil, true, NoHandleError("收到 SOCKS4 请求；TcpRoute2 监听端口仅支持 SOCKS5，请将客户端代理协议改为 SOCKS5")
-	}
-
 	for _, hn := range sh.handlerNewers {
 		if h, reset, _ := hn.New(pc); h != nil {
 			if reset {
