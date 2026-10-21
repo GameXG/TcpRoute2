@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c
-	github.com/GameXG/ProxyClient v0.0.0-20261011182721-79be5c5c5fd0
+	github.com/GameXG/ProxyClient v0.0.0-20261021115054-d0fe248fc2c0
 	github.com/gamexg/preRead v0.0.0-20160129024708-5103afdd7167
 	github.com/golang/glog v1.2.5
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8

@@ -2,6 +2,8 @@ github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c h1:pxW6RcqyfI9/k
 github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
 github.com/GameXG/ProxyClient v0.0.0-20261011182721-79be5c5c5fd0 h1:EFR4+fSqMT2p3g8ndztMq7Jdg9c2rKgi1Wy73jtzoWU=
 github.com/GameXG/ProxyClient v0.0.0-20261011182721-79be5c5c5fd0/go.mod h1:kKExA1GPEYNMbxePX8QC/VIcU6R9uTl65hlikSPjPXc=
+github.com/GameXG/ProxyClient v0.0.0-20261021115054-d0fe248fc2c0 h1:8dXtiqOWaL0Tpaxtc/bTbbUdlrBgIEveskF7qziTGKw=
+github.com/GameXG/ProxyClient v0.0.0-20261021115054-d0fe248fc2c0/go.mod h1:kKExA1GPEYNMbxePX8QC/VIcU6R9uTl65hlikSPjPXc=
 github.com/andybalholm/brotli v1.2.0 h1:ukwgCxwYrmACq68yiUqwIWnGY0cTPox/M94sVwToPjQ=
 github.com/andybalholm/brotli v1.2.0/go.mod h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=
 github.com/apernet/quic-go v0.59.1-0.20260217092621-db4786c77a22 h1:00ziBGnLWQEcR9LThDwvxOznJJquJ9bYUdmBFnawLMU=
